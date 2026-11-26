@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gespann-Navi">
+<meta name="theme-color" content="#14366b">
+<title>Gespann-Navi</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: Karte rechts, Bedienfeld links (Desktop); Karte oben, Bedienfeld darunter (Handy). Farben nach Verkehrsschildern. */
+:root{
+  --bg:#f3f5f8; --panel:#ffffff; --fg:#17202c; --muted:#5d6878; --line:#dde2ea;
+  --accent:#14366b;           /* Wegweiser-Dunkelblau */
+  --accent-fg:#ffffff;
+  --short:#e0a100;            /* Bundesstraßen-Gelb */
+  --fast:#1d5bd6;             /* Autobahn-Blau */
+  --eco:#2f8a3b;              /* Grün */
+  --warn:#b45309; --bad:#b91c1c; --good:#15803d;
+  --chip:#eef1f6;
+  --font-display:"Barlow Semi Condensed","Arial Narrow",Arial,sans-serif;
+  --font-body:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#0f141b;--panel:#171e28;--fg:#e6ebf2;--muted:#9aa6b6;--line:#2a3442;--accent:#5d8fe0;--accent-fg:#0b1220;--short:#f2b705;--fast:#5b8cff;--eco:#4fbf5d;--warn:#f59e0b;--bad:#f87171;--good:#4ade80;--chip:#222b38;color-scheme:dark}
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font-body);display:flex;flex-direction:column;
+  padding-top:env(safe-area-inset-top,0px)}
+header{display:flex;align-items:center;gap:10px;padding:10px max(16px,env(safe-area-inset-left,0px)) 10px max(16px,env(safe-area-inset-left,0px));background:var(--accent);color:var(--accent-fg)}
+header h1{font:700 22px/1 var(--font-display);letter-spacing:.02em;margin:0}
+header .sign{width:30px;height:22px;border:2px solid currentColor;border-radius:4px;display:grid;place-items:center;font:700 12px var(--font-display)}
+header .sub{font-size:12px;opacity:.85;margin-left:auto;text-align:right}
+main{flex:1;display:flex;min-height:0}
+#panel{width:420px;max-width:100%;background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;display:flex;flex-direction:column}
+#map{flex:1;min-height:0}
+@media (max-width:820px){
+  main{flex-direction:column}
+  #map{flex:none;height:42vh}
+  #panel{width:100%;border-right:0;border-top:1px solid var(--line);flex:1}
+}
+.tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:5}
+.tabs button{flex:1;padding:12px 8px;border:0;background:none;color:var(--muted);font:600 15px var(--font-display);letter-spacing:.03em;text-transform:uppercase;cursor:pointer;border-bottom:3px solid transparent}
+.tabs button[aria-selected="true"]{color:var(--fg);border-bottom-color:var(--accent)}
+.view{padding:14px max(16px,env(safe-area-inset-left,0px)) 24px;display:flex;flex-direction:column;gap:14px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:500}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--fast);outline-offset:1px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+fieldset{border:1px solid var(--line);border-radius:10px;padding:10px 12px 12px;margin:0;display:flex;flex-direction:column;gap:10px}
+legend{font:600 14px var(--font-display);text-transform:uppercase;letter-spacing:.05em;color:var(--fg);padding:0 4px}
+.hint{font-size:12px;color:var(--muted);margin:0}
+.btn{font:600 16px var(--font-display);letter-spacing:.03em;padding:11px 14px;border-radius:8px;border:0;background:var(--accent);color:var(--accent-fg);cursor:pointer}
+.btn.secondary{background:var(--chip);color:var(--fg)}
+.btn:disabled{opacity:.55;cursor:progress}
+.row{display:flex;gap:8px;align-items:flex-end}
+.row > *{min-width:0}
+.ac{position:relative}
+.ac ul{position:absolute;left:0;right:0;top:100%;z-index:20;list-style:none;margin:2px 0 0;padding:4px;background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);max-height:260px;overflow:auto}
+.ac li{padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--fg)}
+.ac li small{color:var(--muted)}
+.ac li:hover,.ac li.sel{background:var(--chip)}
+.iconbtn{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:13px;white-space:nowrap}
+#status{font-size:13px;color:var(--muted);min-height:1em}
+#status.err{color:var(--bad)}
+.cards{display:flex;flex-direction:column;gap:10px}
+.card{border:1px solid var(--line);border-radius:10px;padding:12px;cursor:pointer;background:var(--panel);position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:var(--c)}
+.card.active{box-shadow:0 0 0 2px var(--c) inset}
+.card h3{margin:0 0 6px 6px;font:700 18px/1.1 var(--font-display);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{font:600 11px var(--font-body);padding:2px 7px;border-radius:99px;background:var(--chip);color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px;margin-left:6px}
+.kpi b{display:block;font:600 19px/1.1 var(--font-display);font-variant-numeric:tabular-nums}
+.kpi span{font-size:11px;color:var(--muted)}
+.facts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0 6px}
+.facts span{font-size:11.5px;background:var(--chip);padding:2px 8px;border-radius:99px}
+.facts .w{color:var(--warn)}
+.note{font-size:12px;color:var(--muted);margin:6px 0 0 6px}
+details{border:1px solid var(--line);border-radius:10px;padding:8px 12px}
+summary{cursor:pointer;font:600 15px var(--font-display);text-transform:uppercase;letter-spacing:.04em}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+td,th{padding:5px 4px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:600;color:var(--muted);font-size:12px}
+td.r,th.r{text-align:right}
+.tblwrap{overflow-x:auto}
+.stations{display:flex;flex-direction:column;gap:6px}
+.st{border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;cursor:pointer}
+.st b{font-weight:600}
+.st .meta{color:var(--muted);font-size:12px}
+.st .price{float:right;font:700 18px var(--font-display);font-variant-numeric:tabular-nums}
+.st.best{border-color:var(--good)}
+.stopHead{font:700 15px var(--font-display);text-transform:uppercase;letter-spacing:.04em;margin-top:6px}
+.maneuvers{max-height:320px;overflow:auto;font-size:13px}
+.maneuvers li{padding:4px 0;border-bottom:1px dashed var(--line)}
+.maneuvers ol{padding-left:20px;margin:0}
+.leaflet-container{font:inherit;background:var(--bg)}
+.pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.fuelpin{width:22px;height:22px;border-radius:6px;background:#fff;border:2px solid var(--accent);display:grid;place-items:center;font:700 11px var(--font-display);color:#14366b}
+.fuelpin.cheap{border-color:#15803d;background:#dcfce7}
+footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="sign">80</div>
+  <h1>Gespann-Navi</h1>
+  <div class="sub">Routen für Auto + Wohnwagen<br>Prototyp</div>
+</header>
+<main>
+  <section id="panel">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-route" aria-selected="true" data-view="v-route">Route</button>
+      <button role="tab" id="tab-gespann" aria-selected="false" data-view="v-gespann">Mein Gespann</button>
+    </div>
+
+    <div class="view" id="v-route">
+      <div class="ac">
+        <label for="from">Start</label>
+        <div class="row">
+          <input id="from" placeholder="Ort oder Adresse, z. B. München" autocomplete="off">
+          <button class="iconbtn" id="gps" title="Aktuellen Standort als Start verwenden">📍 Hier</button>
+        </div>
+        <ul hidden></ul>
+      </div>
+      <div class="ac">
+        <label for="to">Ziel</label>
+        <input id="to" placeholder="z. B. Campingplatz Rovinj" autocomplete="off">
+        <ul hidden></ul>
+      </div>
+      <div class="grid2">
+        <label>Tank jetzt (%)<input id="fillNow" type="number" min="5" max="100" step="5" value="80"></label>
+        <label>Fähren<select id="ferry"><option value="0.5">erlaubt</option><option value="0">vermeiden</option></select></label>
+      </div>
+      <p class="hint">Tipp: Auf die Karte tippen, um Start oder Ziel direkt zu setzen.</p>
+      <button class="btn" id="go">3 Routen berechnen</button>
+      <div id="status" role="status"></div>
+      <div class="cards" id="cards"></div>
+      <div id="detail"></div>
+    </div>
+
+    <div class="view" id="v-gespann" hidden>
+      <fieldset>
+        <legend>Maße des Gespanns</legend>
+        <div class="grid3">
+          <label>Höhe (m)<input id="height" type="number" step="0.05" value="3.00"></label>
+          <label>Breite (m)<input id="width" type="number" step="0.05" value="2.55"></label>
+          <label>Länge (m)<input id="length" type="number" step="0.1" value="13.0"></label>
+        </div>
+        <div class="grid2">
+          <label>Gesamtgewicht (t)<input id="weight" type="number" step="0.1" value="3.5"></label>
+          <label>Wohnwagen-Gewicht (t)<input id="trailer" type="number" step="0.1" value="1.6"></label>
+        </div>
+        <p class="hint">Höhe = höchster Punkt (meist Wohnwagen mit Dachaufbau). Breite inkl. Spiegel. Länge = Auto + Wohnwagen.</p>
+      </fieldset>
+      <fieldset>
+        <legend>Tempo mit Wohnwagen</legend>
+        <div class="grid2">
+          <label>Landstraße (km/h)<input id="vLand" type="number" step="5" value="80"></label>
+          <label>Autobahn (km/h)<input id="vAb" type="number" step="5" value="100"></label>
+        </div>
+        <p class="hint">Es gilt immer das Niedrigere: dein Wert oder das Gespann-Tempolimit des jeweiligen Landes (z. B. Italien 80, Schweiz 80).</p>
+      </fieldset>
+      <fieldset>
+        <legend>Verbrauch und Tank</legend>
+        <div class="grid2">
+          <label>Kraftstoff<select id="fuel"><option value="diesel">Diesel</option><option value="e10">Benzin (E10/E5)</option></select></label>
+          <label>Ø-Verbrauch mit WoWa (l/100 km)<input id="cons" type="number" step="0.5" value="12"></label>
+          <label>Tankinhalt (l)<input id="tank" type="number" step="5" value="70"></label>
+          <label>Reserve (%)<input id="reserve" type="number" step="5" value="20"></label>
+          <label>Max. Abstecher zum Tanken (km)<input id="detour" type="number" step="1" value="5"></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Live-Spritpreise (optional)</legend>
+        <label>Tankerkönig API-Key (Deutschland)<input id="tkKey" placeholder="kostenlos auf creativecommons.tankerkoenig.de"></label>
+        <p class="hint">Frankreich hat Live-Preise ohne Key. Für andere Länder rechnet die App mit Landes-Durchschnittspreisen.</p>
+      </fieldset>
+      <button class="btn" id="save">Gespann speichern</button>
+      <div id="saved" class="hint"></div>
+    </div>
+    <footer>Karten &amp; Daten © OpenStreetMap-Mitwirkende · Routing: Valhalla (FOSSGIS) · Suche: Photon · Tankstellen: Overpass. Alle Maut-, Preis- und Tempoangaben sind Richtwerte ohne Gewähr – bitte vor der Fahrt prüfen.</footer>
+  </section>
+  <div id="map"></div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+const VALHALLA = "https://valhalla1.openstreetmap.de";
+const PHOTON = "https://photon.komoot.io";
+const OVERPASS = "https://overpass-api.de/api/interpreter";
+
+/* ---------- Länderdaten (Richtwerte, Stand Ende 2026, ohne Gewähr) ---------- */
+// Gespann-Tempolimits Pkw + Anhänger bis 3,5 t: ab = Autobahn, ls = Landstraße
+const LIMITS = {
+  DE:{ab:100,ls:80}, AT:{ab:100,ls:80}, CH:{ab:80,ls:80}, IT:{ab:80,ls:70}, FR:{ab:130,ls:80}, ES:{ab:90,ls:80},
+  PT:{ab:100,ls:70}, SI:{ab:80,ls:80}, HR:{ab:90,ls:80}, CZ:{ab:80,ls:80}, SK:{ab:80,ls:80}, HU:{ab:80,ls:70},
+  PL:{ab:80,ls:70}, NL:{ab:90,ls:80}, BE:{ab:120,ls:70}, LU:{ab:90,ls:75}, DK:{ab:80,ls:70}, SE:{ab:80,ls:70},
+  NO:{ab:80,ls:80}, GR:{ab:90,ls:80}, RO:{ab:100,ls:80}, BG:{ab:100,ls:70}, RS:{ab:80,ls:80}, BA:{ab:80,ls:80},
+  ME:{ab:80,ls:80}, AL:{ab:80,ls:70}, MK:{ab:80,ls:80}, GB:{ab:96,ls:80}, IE:{ab:80,ls:80}, FI:{ab:80,ls:80}
+};
+// Durchschnittspreise €/l
+const PRICES = {
+  diesel:{DE:1.85,AT:1.80,CH:2.10,IT:1.95,FR:1.98,ES:1.65,PT:1.80,SI:1.70,HR:1.65,CZ:1.65,SK:1.70,HU:1.70,PL:1.60,NL:1.95,BE:1.95,LU:1.65,DK:1.95,SE:1.90,NO:2.10,GR:1.80,RO:1.65,BG:1.55,RS:1.75,BA:1.55,ME:1.60,AL:1.85,GB:1.90,IE:1.90,FI:2.00},
+  e10:   {DE:1.90,AT:1.80,CH:2.05,IT:2.00,FR:1.92,ES:1.70,PT:1.95,SI:1.65,HR:1.62,CZ:1.62,SK:1.75,HU:1.72,PL:1.65,NL:2.20,BE:1.85,LU:1.70,DK:2.10,SE:1.95,NO:2.15,GR:2.00,RO:1.65,BG:1.55,RS:1.75,BA:1.55,ME:1.65,AL:1.95,GB:1.85,IE:1.95,FI:2.05}
+};
+const DEFAULT_PRICE = {diesel:1.85, e10:1.90};
+// Streckenmaut pro km (Gespann, meist Klasse 2/3)
+const TOLL_PER_KM = {FR:0.15, IT:0.10, ES:0.12, PT:0.14, HR:0.10, PL:0.06, GR:0.07, RS:0.07, NO:0.10, IE:0.08, MK:0.05, ME:0.05, BA:0.05, AL:0.05};
+// Vignetten (Preis für die Reise inkl. Anhänger-Vignette, wo nötig)
+const VIGNETTE = {
+  AT:{p:12.80, t:"10-Tages-Vignette"},
+  CH:{p:86.00, t:"Jahresvignette Auto + eigene Vignette für den Wohnwagen (je 40 CHF)"},
+  SI:{p:16.00, t:"7-Tages-Vignette"},
+  CZ:{p:11.00, t:"10-Tages-Vignette"},
+  SK:{p:12.00, t:"10-Tages-Vignette"},
+  HU:{p:34.00, t:"10-Tages-Vignette D1 + Anhänger-Vignette U"},
+  RO:{p:6.00,  t:"7-Tages-Rovinieta Auto + Anhänger"},
+  BG:{p:8.00,  t:"Wochen-Vignette"},
+  MD:{p:4.00,  t:"7-Tages-Vignette"}
+};
+// Sondermautstrecken in Österreich (zusätzlich zur Vignette)
+const AT_SPECIAL = [
+  {re:/\bA ?13\b|Brenner/i, name:"Brenner-Autobahn A13", p:12.50},
+  {re:/\bA ?10\b|Tauern/i, name:"Tauern-Autobahn A10", p:17.50},
+  {re:/\bA ?11\b|Karawanken/i, name:"Karawankentunnel A11", p:8.90},
+  {re:/\bA ?9\b|Pyhrn|Gleinalm|Bosruck/i, name:"Pyhrn-Autobahn A9 (Bosruck/Gleinalm)", p:20.00},
+  {re:/\bS ?16\b|Arlberg/i, name:"Arlbergtunnel S16", p:12.50}
+];
+const COUNTRY = {DE:"Deutschland",AT:"Österreich",CH:"Schweiz",IT:"Italien",FR:"Frankreich",ES:"Spanien",PT:"Portugal",SI:"Slowenien",HR:"Kroatien",CZ:"Tschechien",SK:"Slowakei",HU:"Ungarn",PL:"Polen",NL:"Niederlande",BE:"Belgien",LU:"Luxemburg",DK:"Dänemark",SE:"Schweden",NO:"Norwegen",GR:"Griechenland",RO:"Rumänien",BG:"Bulgarien",RS:"Serbien",BA:"Bosnien-Herz.",ME:"Montenegro",AL:"Albanien",MK:"Nordmazedonien",GB:"Großbritannien",IE:"Irland",FI:"Finnland",LI:"Liechtenstein",MC:"Monaco",AD:"Andorra",SM:"San Marino"};
+const cname = c => COUNTRY[c] || c || "?";
+
+/* ---------- Hilfsfunktionen ---------- */
+const $ = s => document.querySelector(s);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmtKm = km => km >= 100 ? Math.round(km).toLocaleString("de-DE") : km.toLocaleString("de-DE",{maximumFractionDigits:1});
+const fmtEur = e => e.toLocaleString("de-DE",{style:"currency",currency:"EUR",maximumFractionDigits:e>=100?0:2});
+const fmtH = h => { const m = Math.round(h*60); return Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min"; };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function setStatus(t, err){ const s=$("#status"); s.textContent=t||""; s.className=err?"err":""; }
+function hav(a, b){ const R=6371, toR=Math.PI/180; const dLa=(b[0]-a[0])*toR, dLo=(b[1]-a[1])*toR;
+  const x=Math.sin(dLa/2)**2+Math.cos(a[0]*toR)*Math.cos(b[0]*toR)*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(x)); }
+function decode6(str){ let i=0,lat=0,lng=0; const out=[];
+  while(i<str.length){ let b,sh=0,res=0; do{b=str.charCodeAt(i++)-63;res|=(b&31)<<sh;sh+=5;}while(b>=32); lat+=(res&1)?~(res>>1):(res>>1);
+    sh=0;res=0; do{b=str.charCodeAt(i++)-63;res|=(b&31)<<sh;sh+=5;}while(b>=32); lng+=(res&1)?~(res>>1):(res>>1);
+    out.push([lat/1e6,lng/1e6]); } return out; }
+function encNum(v){ v = v<0 ? ~(v<<1) : (v<<1); let s=""; while(v>=32){ s+=String.fromCharCode((32|(v&31))+63); v>>=5; } return s+String.fromCharCode(v+63); }
+function encode6(pts){ let s="",pa=0,po=0; for(const [la,lo] of pts){ const a=Math.round(la*1e6),o=Math.round(lo*1e6); s+=encNum(a-pa)+encNum(o-po); pa=a; po=o; } return s; }
+async function postJSON(url, body){
+  for(let attempt=0; attempt<3; attempt++){
+    const r = await fetch(url,{method:"POST",body:JSON.stringify(body)});
+    if(r.status===429){ await sleep(1500*(attempt+1)); continue; }
+    const j = await r.json().catch(()=>({error:"Ungültige Antwort ("+r.status+")"}));
+    return j;
+  }
+  return {error:"Der Routing-Server ist gerade ausgelastet. Bitte in einer Minute nochmal versuchen."};
+}
+
+/* ---------- Einstellungen ---------- */
+const FIELDS = ["height","width","length","weight","trailer","vLand","vAb","fuel","cons","tank","reserve","detour","tkKey"];
+function loadSettings(){ try{ const s=JSON.parse(localStorage.getItem("gespann")||"{}"); FIELDS.forEach(f=>{ if(s[f]!==undefined) $("#"+f).value=s[f]; }); }catch(e){} }
+function settings(){ const s={}; FIELDS.forEach(f=>{ const el=$("#"+f); s[f]= el.type==="number" ? parseFloat(el.value) : el.value.trim(); }); return s; }
+$("#save").onclick = () => { try{ localStorage.setItem("gespann", JSON.stringify(settings())); $("#saved").textContent="Gespeichert auf diesem Gerät."; }catch(e){ $("#saved").textContent="Speichern nicht möglich (privater Modus?). Die Werte gelten bis zum Schließen."; } };
+loadSettings();
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-selected", x===b));
+  document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== b.dataset.view);
+});
+
+/* ---------- Karte ---------- */
+const map = L.map("map",{zoomControl:true}).setView([47.5, 10.5], 5);
+L.tileLayer("https://tile.openstreetmap.de/{z}/{x}/{y}.png",{
+  maxZoom:19, attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende'}).addTo(map);
+const pinIcon = c => L.divIcon({className:"",html:`<div class="pin" style="background:${c}"></div>`,iconSize:[26,26],iconAnchor:[13,26]});
+const pts = {from:null, to:null}; const pinMarkers = {};
+function setPoint(which, lat, lon, label){
+  pts[which] = {lat, lon, label};
+  $("#"+which).value = label;
+  if(pinMarkers[which]) map.removeLayer(pinMarkers[which]);
+  pinMarkers[which] = L.marker([lat,lon],{icon:pinIcon(which==="from"?"#15803d":"#b91c1c")}).addTo(map).bindTooltip(which==="from"?"Start":"Ziel");
+  if(pts.from && pts.to) map.fitBounds([[pts.from.lat,pts.from.lon],[pts.to.lat,pts.to.lon]],{padding:[40,40]});
+  else map.setView([lat,lon], 9);
+}
+map.on("click", e => {
+  const {lat,lng} = e.latlng;
+  const html = `<div style="display:flex;gap:6px"><button class="iconbtn" id="pf">Als Start</button><button class="iconbtn" id="pt">Als Ziel</button></div>`;
+  const pop = L.popup().setLatLng(e.latlng).setContent(html).openOn(map);
+  setTimeout(()=>{
+    const lab = async which => { map.closePopup(pop); let name = lat.toFixed(4)+", "+lng.toFixed(4);
+      setPoint(which, lat, lng, name);
+      try{ const j = await fetch(`${PHOTON}/reverse?lat=${lat}&lon=${lng}&lang=de`).then(r=>r.json()); if(j.features&&j.features[0]) { name = placeLabel(j.features[0].properties); $("#"+which).value=name; pts[which].label=name; } }catch(err){}
+    };
+    const f=document.getElementById("pf"), t=document.getElementById("pt"); if(f) f.onclick=()=>lab("from"); if(t) t.onclick=()=>lab("to");
+  },0);
+});
+
+/* ---------- Ortssuche ---------- */
+function placeLabel(p){ return [p.name, p.street && p.housenumber ? p.street+" "+p.housenumber : p.street, p.city && p.city!==p.name ? p.city : null, p.country].filter(Boolean).join(", "); }
+function setupAC(which){
+  const input = $("#"+which), list = input.closest(".ac").querySelector("ul"); let timer, items=[], sel=-1;
+  const close = () => { list.hidden = true; sel=-1; };
+  input.addEventListener("input", () => { pts[which]=null; clearTimeout(timer); const q=input.value.trim(); if(q.length<3){close();return;}
+    timer = setTimeout(async () => {
+      try{ const c = map.getCenter(); const j = await fetch(`${PHOTON}/api/?q=${encodeURIComponent(q)}&limit=6&lang=de&lat=${c.lat}&lon=${c.lng}`).then(r=>r.json());
+        items = j.features||[]; list.innerHTML = items.map((f,i)=>`<li data-i="${i}">${esc(f.properties.name||"")}<br><small>${esc([f.properties.city,f.properties.state,f.properties.country].filter(x=>x&&x!==f.properties.name).join(", "))}</small></li>`).join("");
+        list.hidden = !items.length;
+      }catch(e){ close(); }
+    }, 300);
+  });
+  const pick = i => { const f=items[i]; if(!f) return; const [lon,lat]=f.geometry.coordinates; setPoint(which, lat, lon, placeLabel(f.properties)); close(); };
+  list.addEventListener("mousedown", e => { const li=e.target.closest("li"); if(li){ e.preventDefault(); pick(+li.dataset.i); } });
+  input.addEventListener("keydown", e => {
+    if(list.hidden) return;
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){ e.preventDefault(); sel = (sel + (e.key==="ArrowDown"?1:-1) + items.length) % items.length; [...list.children].forEach((li,i)=>li.classList.toggle("sel",i===sel)); }
+    if(e.key==="Enter"){ e.preventDefault(); pick(sel<0?0:sel); }
+    if(e.key==="Escape") close();
+  });
+  input.addEventListener("blur", () => setTimeout(close,150));
+}
+setupAC("from"); setupAC("to");
+$("#gps").onclick = () => {
+  if(!navigator.geolocation){ setStatus("Standort ist in diesem Browser nicht verfügbar.", true); return; }
+  setStatus("Standort wird ermittelt …");
+  navigator.geolocation.getCurrentPosition(p => { setPoint("from", p.coords.latitude, p.coords.longitude, "Mein Standort"); setStatus(""); },
+    () => setStatus("Standort nicht freigegeben. Bitte Start eintippen.", true), {enableHighAccuracy:true, timeout:10000});
+};
+
+/* ---------- Routing ---------- */
+function truckOptions(s, extra){
+  return Object.assign({
+    height:s.height, width:s.width, length:s.length, weight:s.weight,
+    axle_load: Math.max(1, s.weight/2), hazmat:false,
+    top_speed: Math.min(130, Math.max(60, s.vAb||100)),
+    exclude_unpaved:true, use_living_streets:0, use_tracks:0,
+    use_ferry: parseFloat($("#ferry").value),
+    hgv_no_access_penalty: 120,  // Wohnwagen darf auf "LKW verboten"-Straßen, aber nicht bevorzugt
+    low_class_penalty: 60        // kleine Straßen meiden
+  }, extra||{});
+}
+const VARIANTS = [
+  {key:"std",  label:"Standard", extra:{}, alternates:2},
+  {key:"short",label:"kürzeste", extra:{shortest:true}},
+  {key:"land", label:"Landstraße", extra:{use_highways:0, top_speed:80}},
+  {key:"mix",  label:"gemischt", extra:{use_highways:0.4, top_speed:90}},
+  {key:"notoll",label:"mautfrei", extra:{use_tolls:0}}
+];
+
+async function fetchCandidates(s){
+  const locs = [{lat:pts.from.lat, lon:pts.from.lon}, {lat:pts.to.lat, lon:pts.to.lon}];
+  const dist = hav([locs[0].lat,locs[0].lon],[locs[1].lat,locs[1].lon]);
+  const cands = []; let lastErr = null;
+  for(const v of VARIANTS){
+    setStatus(`Suche Routen für dein Gespann … (${v.label})`);
+    const body = {locations:locs, costing:"truck", costing_options:{truck:truckOptions(s, v.extra)}, units:"kilometers", language:"de-DE"};
+    if(v.alternates) body.alternates = v.alternates;
+    const j = await postJSON(VALHALLA+"/route", body);
+    if(j.error || !j.trip){ lastErr = j.error || "unbekannter Fehler"; continue; }
+    [j, ...(j.alternates||[])].forEach(x => cands.push({trip:x.trip, origin:v.label}));
+    await sleep(250);
+  }
+  if(!cands.length) throw new Error("Keine Route gefunden: "+lastErr);
+  // Doppelte entfernen
+  const seen = new Set(); const uniq = [];
+  for(const c of cands){ const k = Math.round(c.trip.summary.length*2)+"_"+Math.round(c.trip.summary.time/120); if(!seen.has(k)){ seen.add(k); uniq.push(c); } }
+  return uniq;
+}
+
+async function traceEdges(leg){
+  const shape = decode6(leg.shape);
+  // In Stücke < 15.000 Punkte teilen, an Manövergrenzen
+  const bounds = [0]; const idxs = leg.maneuvers.map(m=>m.begin_shape_index);
+  let start = 0;
+  for(let k=0;k<idxs.length;k++){ if(idxs[k]-start > 14000){ const b = k>0 ? idxs[k-1] : idxs[k]; if(b>start){ bounds.push(b); start=b; } } }
+  if(shape.length-1-start > 15000){ for(let b=start+14000;b<shape.length-1;b+=14000) bounds.push(b); }
+  bounds.push(shape.length-1);
+  const edges = [];
+  for(let i=0;i<bounds.length-1;i++){
+    const part = shape.slice(bounds[i], bounds[i+1]+1);
+    if(part.length<2) continue;
+    const j = await postJSON(VALHALLA+"/trace_attributes", {encoded_polyline:encode6(part), shape_match:"edge_walk", costing:"truck",
+      filters:{attributes:["edge.length","edge.speed","edge.road_class","edge.toll","edge.use","edge.weighted_grade","edge.density","edge.tunnel","edge.bridge","edge.mean_elevation","edge.speed_limit","edge.names","edge.begin_shape_index","edge.end_shape_index","node.admin_index","admin.country_code"],action:"include"}});
+    if(j.error || !j.edges){ throw new Error("Streckendetails nicht verfügbar: "+(j.error||"")); }
+    let lastCC = edges.length ? edges[edges.length-1].cc : (j.admins&&j.admins[0]&&j.admins[0].country_code);
+    for(const e of j.edges){
+      const ai = e.end_node && e.end_node.admin_index; const cc = (ai!==undefined && j.admins[ai]) ? j.admins[ai].country_code : lastCC; lastCC = cc;
+      edges.push({len:e.length||0, speed:e.speed||50, cls:e.road_class, toll:!!e.toll, use:e.use, grade:e.weighted_grade||0, density:e.density||0, tunnel:!!e.tunnel, bridge:!!e.bridge, elev:(typeof e.mean_elevation==="number" && e.mean_elevation>-500) ? e.mean_elevation : null, limit:typeof e.speed_limit==="number" ? e.speed_limit : null, names:e.names||[], cc,
+        s0:(e.begin_shape_index||0)+bounds[i], s1:(e.end_shape_index||0)+bounds[i]});
+    }
+    await sleep(200);
+  }
+  return {edges, shape};
+}
+
+function analyse(cand, s, ed){
+  const {edges, shape} = ed; const leg = cand.trip.legs[0];
+  const cons = s.cons || 12, fuelType = s.fuel;
+  let ascent=0, elevRef=null, km=0, hours=0, hoursCar=0, hwyKm=0, townKm=0, smallKm=0, maxGrade=0, flatFuel=0;
+  const byCC = {}; const cum = []; // kumulierte km/Liter je Kante
+  const cc0 = () => ({km:0, tollKm:0, hwyKm:0, fuel:0, names:new Set()});
+  for(const e of edges){
+    const c = e.cc || "??"; const lim = LIMITS[c] || {ab:100, ls:80};
+    const hwy = e.cls==="motorway" || (e.cls==="trunk" && e.speed>=100);
+    const cap = hwy ? Math.min(s.vAb||100, lim.ab) : Math.min(s.vLand||80, lim.ls);
+    const v = Math.max(5, Math.min(e.speed, cap));
+    const vCar = Math.max(5, Math.min(e.speed, hwy?130:100));
+    hours += e.len/v; hoursCar += e.len/vCar; km += e.len;
+    if(hwy) hwyKm += e.len;
+    const town = !hwy && e.cls!=="service_other" && ((e.limit!==null && e.limit<=50) || (e.density>=5 && e.speed<=55));
+    if(town) townKm += e.len;
+    if(["unclassified","residential","service_other"].includes(e.cls) && !town) smallKm += e.len;
+    if(!e.tunnel && !e.bridge){ if(e.elev!==null){ if(elevRef===null) elevRef=e.elev; else if(e.elev-elevRef>15){ ascent+=e.elev-elevRef; elevRef=e.elev; } else if(elevRef-e.elev>15) elevRef=e.elev; } if(e.len>=0.3) maxGrade = Math.max(maxGrade, e.grade); }
+    // Verbrauch: dein Ø-Wert gilt bei ca. 85 km/h; Luftwiderstand steigt mit dem Quadrat, Stadt = Stop-and-go
+    const f = v<=55 ? 1.18 : 0.35 + 0.65*Math.pow(v/85,2);
+    const l = e.len/100*cons*f; flatFuel += l;
+    const b = byCC[c] || (byCC[c]=cc0());
+    b.km += e.len; b.fuel += l; if(hwy) b.hwyKm += e.len; if(e.toll) b.tollKm += e.len; e.names.forEach(n=>b.names.add(n));
+    cum.push({km, fuel:flatFuel, s1:e.s1});
+  }
+  hours += leg.maneuvers.length*2/3600; // Abbiegen, Kreuzungen
+  // Höhenmeter
+  const massKg = (s.weight||3.5)*1000;
+  const energy = fuelType==="diesel" ? 35.8e6*0.33 : 32.0e6*0.27; // J pro Liter, die tatsächlich als Hubarbeit ankommen
+  const climbFuel = massKg*9.81*ascent/energy;
+  const fuel = flatFuel + climbFuel;
+  const scale = flatFuel>0 ? fuel/flatFuel : 1;
+  cum.forEach(c => c.fuel *= scale);
+  let fuelCost = 0; const pr = PRICES[fuelType]||{};
+  for(const [c,b] of Object.entries(byCC)){ b.fuel *= scale; b.price = pr[c] || DEFAULT_PRICE[fuelType]; fuelCost += b.fuel*b.price; }
+  // Maut
+  const toll = [];
+  for(const [c,b] of Object.entries(byCC)){
+    if(TOLL_PER_KM[c] && b.tollKm>1) toll.push({cc:c, what:`Streckenmaut ${fmtKm(b.tollKm)} km × ${TOLL_PER_KM[c].toFixed(2).replace(".",",")} €`, p:b.tollKm*TOLL_PER_KM[c]});
+    if(VIGNETTE[c] && b.hwyKm>2) toll.push({cc:c, what:VIGNETTE[c].t, p:VIGNETTE[c].p});
+    if(c==="AT"){ const names=[...b.names].join(" | "); AT_SPECIAL.forEach(sp => { if(sp.re.test(names)) toll.push({cc:c, what:"Sondermaut "+sp.name+" (wahrscheinlich)", p:sp.p}); }); }
+  }
+  const tollSum = toll.reduce((a,t)=>a+t.p,0);
+  const countries = []; edges.forEach(e => { if(e.cc && countries[countries.length-1]!==e.cc) countries.push(e.cc); });
+  return {cand, leg, shape, edges, cum, km, hours, hoursCar, hwyKm, townKm, smallKm, maxGrade, ascent, fuel, fuelCost, toll, tollSum, byCC,
+    countries:[...new Set(countries)], valTime:cand.trip.summary.time/3600, total: fuelCost + tollSum};
+}
+
+function pickThree(list){
+  const cats = [
+    {key:"short", title:"Kürzeste", sup:"kürzeste", color:"var(--short)", hex:"#e0a100", score:r=>r.km, why:"wenigste Kilometer"},
+    {key:"fast",  title:"Schnellste", sup:"schnellste", color:"var(--fast)", hex:"#1d5bd6", score:r=>r.hours, why:"kürzeste Fahrzeit mit Gespann-Tempo"},
+    {key:"eco",   title:"Spritsparend", sup:"spritsparendste", color:"var(--eco)", hex:"#2f8a3b", score:r=>r.fuel + r.townKm*0.02, why:"wenig Liter: kurze Strecke, wenig Steigung, wenig Ortsdurchfahrten"}
+  ];
+  const used = new Set(); const out = [];
+  for(const c of cats){
+    const sorted = [...list].sort((a,b)=>c.score(a)-c.score(b));
+    const best = sorted[0]; const minH = Math.min(...list.map(r=>r.hours)), minKm = Math.min(...list.map(r=>r.km));
+    // Ersatz nur, wenn er nicht viel länger dauert oder weiter ist
+    let pick = used.has(best) ? (sorted.find(r=>!used.has(r) && r.hours<=minH*1.25 && r.km<=minKm*1.12) || best) : best;
+    const same = list.length>=1 && pick!==best ? out.find(o=>o.r===best) : null;
+    const sameAs = pick===best && used.has(best) ? out.find(o=>o.r===best) : null;
+    used.add(pick); out.push({...c, r:pick, dupOf: same ? same.title : null, same: sameAs ? sameAs.title : null});
+  }
+  return out;
+}
+
+/* ---------- Darstellung ---------- */
+let routeLayers = [], fuelLayer = L.layerGroup().addTo(map), current = null, results = [];
+function drawRoutes(active){
+  routeLayers.forEach(l=>map.removeLayer(l)); routeLayers=[];
+  results.forEach((x,i)=>{ if(i===active) return;
+    routeLayers.push(L.polyline(x.r.shape,{color:"#ffffff",weight:7,opacity:.9}).addTo(map), L.polyline(x.r.shape,{color:x.hex,weight:4,opacity:.65}).addTo(map).on("click",()=>selectRoute(i))); });
+  const a = results[active];
+  routeLayers.push(L.polyline(a.r.shape,{color:"#ffffff",weight:10,opacity:1}).addTo(map), L.polyline(a.r.shape,{color:a.hex,weight:6,opacity:1}).addTo(map));
+}
+function renderCards(){
+  $("#cards").innerHTML = results.map((x,i)=>{ const r=x.r;
+    const facts = [
+      `${Math.round(r.hwyKm/r.km*100)} % Autobahn`,
+      `${fmtKm(r.townKm)} km durch Orte`,
+      `↗ ${Math.round(r.ascent).toLocaleString("de-DE")} Hm bergauf`,
+      r.maxGrade>=8 ? `<span class="w">steilste Stelle ca. ${Math.round(r.maxGrade)} %</span>` : `max. ca. ${Math.round(r.maxGrade)} % Steigung`,
+      r.smallKm>3 ? `<span class="w">${fmtKm(r.smallKm)} km kleine Straßen</span>` : null,
+      r.countries.map(cname).join(" → ")
+    ].filter(Boolean).map(f=>`<span>${f}</span>`).join("");
+    return `<div class="card ${i===current?"active":""}" style="--c:${x.color}" data-i="${i}" tabindex="0">
+      <h3>${x.title} <span class="badge">${x.why}</span></h3>
+      <div class="kpis">
+        <div class="kpi"><b>${fmtKm(r.km)} km</b><span>Strecke</span></div>
+        <div class="kpi"><b>${fmtH(r.hours)}</b><span>Fahrzeit Gespann</span></div>
+        <div class="kpi"><b>${r.fuel.toFixed(0)} l</b><span>≈ ${fmtEur(r.fuelCost)} Sprit</span></div>
+        <div class="kpi"><b>${fmtEur(r.tollSum)}</b><span>Maut/Vignetten</span></div>
+        <div class="kpi"><b>${fmtEur(r.total)}</b><span>Kosten gesamt</span></div>
+        <div class="kpi"><b>${fmtH(r.hoursCar)}</b><span>zum Vergleich: Pkw solo</span></div>
+      </div>
+      <div class="facts">${facts}</div>
+      ${x.dupOf ? `<p class="note">Die ${x.sup} Strecke ist hier dieselbe wie „${x.dupOf}“. Das hier ist die nächstbeste Alternative.</p>` : ""}${x.same ? `<p class="note">Das ist dieselbe Strecke wie „${x.same}“. Es gibt keine sinnvolle Alternative, die hier besser abschneidet.</p>` : ""}
+    </div>`; }).join("");
+  document.querySelectorAll(".card").forEach(c => { c.onclick = () => selectRoute(+c.dataset.i); c.onkeydown = e => { if(e.key==="Enter") selectRoute(+c.dataset.i); }; });
+}
+function selectRoute(i){
+  current = i; renderCards(); drawRoutes(i); fuelLayer.clearLayers();
+  const x = results[i], r = x.r;
+  map.fitBounds(L.latLngBounds(r.shape),{padding:[30,30]});
+  const tollRows = r.toll.length ? r.toll.map(t=>`<tr><td>${cname(t.cc)}</td><td>${esc(t.what)}</td><td class="r">${fmtEur(t.p)}</td></tr>`).join("") + `<tr><th colspan="2">Summe</th><th class="r">${fmtEur(r.tollSum)}</th></tr>` : `<tr><td colspan="3">Keine Maut auf dieser Route erkannt.</td></tr>`;
+  const ccRows = Object.entries(r.byCC).filter(([c,b])=>b.km>0.5).map(([c,b])=>`<tr><td>${cname(c)}</td><td class="r">${fmtKm(b.km)} km</td><td class="r">${fmtKm(b.hwyKm)} km</td><td class="r">${b.fuel.toFixed(1)} l</td><td class="r">${b.price.toFixed(2).replace(".",",")} €</td></tr>`).join("");
+  const man = r.leg.maneuvers.map(m=>`<li>${esc(m.instruction)} <small style="color:var(--muted)">${m.length>0?fmtKm(m.length)+" km":""}</small></li>`).join("");
+  $("#detail").innerHTML = `
+    <details open><summary>Tankplan</summary>
+      <p class="hint">Mit ${$("#fillNow").value} % Tank, ${settings().tank} l Tank und ${settings().reserve} % Reserve. Gesucht wird bis ${settings().detour} km neben der Route.</p>
+      <button class="btn secondary" id="fuelBtn">Tankstellen entlang der Route suchen</button>
+      <div id="fuelOut" class="stations"></div>
+    </details>
+    <details><summary>Maut &amp; Vignetten</summary><div class="tblwrap"><table><tr><th>Land</th><th>Posten</th><th class="r">€</th></tr>${tollRows}</table></div>
+      <p class="hint">Richtwerte für Auto + Wohnwagen. Brücken, Tunnel (z. B. Mont Blanc, Fréjus) und Fähren sind nicht enthalten.</p></details>
+    <details><summary>Länder, Tempo &amp; Sprit</summary><div class="tblwrap"><table><tr><th>Land</th><th class="r">Strecke</th><th class="r">Autobahn</th><th class="r">Sprit</th><th class="r">Ø-Preis</th></tr>${ccRows}</table></div>
+      <p class="hint">Gerechnet mit Gespann-Tempo: ${[...new Set(Object.keys(r.byCC))].map(c=>{const l=LIMITS[c]||{ab:100,ls:80}; const s=settings(); return `${cname(c)} ${Math.min(s.vAb,l.ab)}/${Math.min(s.vLand,l.ls)}`;}).join(", ")} km/h (Autobahn/Landstraße). Höhenmeter: ${Math.round(r.ascent).toLocaleString("de-DE")} m bergauf. Der Mehrverbrauch am Berg ist eingerechnet.</p></details>
+    <details><summary>Wegbeschreibung</summary><div class="maneuvers"><ol>${man}</ol></div></details>`;
+  $("#fuelBtn").onclick = () => fuelPlan(r);
+}
+
+/* ---------- Tankplan ---------- */
+function pointAtKm(r, km){ // Shape-Index für Kilometer
+  const c = r.cum; let lo=0, hi=c.length-1; while(lo<hi){ const m=(lo+hi)>>1; if(c[m].km<km) lo=m+1; else hi=m; }
+  return {idx: c[lo].s1, fuel: c[lo].fuel};
+}
+function kmAtFuel(r, fuel){ const c=r.cum; for(const x of c){ if(x.fuel>=fuel) return x.km; } return r.km; }
+async function overpassFuel(points, radiusM){
+  const coords = points.map(p=>p[0].toFixed(5)+","+p[1].toFixed(5)).join(",");
+  const q = `[out:json][timeout:40];(node[amenity=fuel](around:${radiusM},${coords});way[amenity=fuel](around:${radiusM},${coords}););out center tags;`;
+  for(let a=0;a<3;a++){
+    try{ const r = await fetch(OVERPASS,{method:"POST",body:"data="+encodeURIComponent(q)}); if(r.status===429||r.status===504){ await sleep(3000); continue; } const j = await r.json(); return j.elements||[]; }catch(e){ await sleep(2000); }
+  }
+  return [];
+}
+async function frPrices(lat, lon, radiusKm, fuelType){
+  const where = `within_distance(geom, geom'POINT(${lon} ${lat})', ${radiusKm}km)`;
+  const url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=50&where=${encodeURIComponent(where)}`;
+  try{ const j = await fetch(url).then(r=>r.json()); return (j.results||[]).map(s=>({lat:s.geom.lat, lon:s.geom.lon, name:(s.adresse||"")+" "+(s.ville||""), price: fuelType==="diesel" ? s.gazole_prix : (s.e10_prix||s.sp95_prix), src:"Live (prix-carburants.gouv.fr)"})).filter(s=>s.price); }catch(e){ return []; }
+}
+async function dePrices(lat, lon, radiusKm, fuelType, key){
+  const t = fuelType==="diesel" ? "diesel" : "e10";
+  try{ const j = await fetch(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lon}&rad=${Math.min(25,radiusKm)}&sort=dist&type=${t}&apikey=${encodeURIComponent(key)}`).then(r=>r.json());
+    if(!j.ok) return []; return (j.stations||[]).filter(s=>s.isOpen && s.price).map(s=>({lat:s.lat, lon:s.lng, name:(s.brand||s.name)+", "+s.place, price:s.price, src:"Live (Tankerkönig)"})); }catch(e){ return []; }
+}
+async function fuelPlan(r){
+  const s = settings(); const out = $("#fuelOut"); const btn = $("#fuelBtn"); btn.disabled = true; out.innerHTML = ""; fuelLayer.clearLayers();
+  const tank = s.tank||70, reserveL = tank*(s.reserve||20)/100; let fuelLeft = tank*(parseFloat($("#fillNow").value)||80)/100;
+  const radius = Math.max(1, s.detour||5);
+  // Stopps planen
+  const stops = []; let usedBase = 0, kmBase = 0;
+  while(true){
+    const kmEmpty = kmAtFuel(r, usedBase + fuelLeft - reserveL);
+    if(kmEmpty >= r.km - 1) break;
+    const rangeKm = (tank - reserveL) / (r.fuel / r.km);
+    const winStart = Math.max(kmBase + 5, kmEmpty - rangeKm*0.35);
+    stops.push({from:winStart, to:kmEmpty});
+    const mid = (winStart + kmEmpty)/2; usedBase = pointAtKm(r, mid).fuel; kmBase = mid; fuelLeft = tank;
+    if(stops.length>12) break;
+  }
+  if(!stops.length){ out.innerHTML = `<p class="hint">Du kommst ohne Tankstopp an (Ankunft mit ca. ${Math.round(Math.max(0, fuelLeft - r.fuel))} l im Tank). Für günstigen Sprit kannst du trotzdem unterwegs tanken: vor teuren Ländern wie der Schweiz oder Italien lohnt es sich.</p>`; btn.disabled=false; return; }
+  for(let k=0;k<stops.length;k++){
+    const st = stops[k]; out.insertAdjacentHTML("beforeend", `<div class="stopHead">Stopp ${k+1}: zwischen km ${Math.round(st.from)} und ${Math.round(st.to)}</div><div id="stop${k}" class="hint">Suche Tankstellen …</div>`);
+    const i0 = pointAtKm(r, st.from).idx, i1 = pointAtKm(r, st.to).idx;
+    const seg = r.shape.slice(i0, i1+1); const samp = []; let acc = 0;
+    for(let i=0;i<seg.length;i++){ if(i>0) acc += hav(seg[i-1],seg[i]); if(i===0 || acc>=2.5 || i===seg.length-1){ samp.push(seg[i]); acc=0; } }
+    const sampled = samp.length>120 ? samp.filter((_,i)=>i%Math.ceil(samp.length/120)===0) : samp;
+    const nearest = p => { let d=1e9; for(const q of sampled){ const x=hav(p,q); if(x<d) d=x; } return d; };
+    let list = (await overpassFuel(sampled, radius*1000)).map(e=>{ const lat=e.lat??e.center.lat, lon=e.lon??e.center.lon, t=e.tags||{};
+      if(s.fuel==="diesel" && t["fuel:diesel"]==="no") return null;
+      return {lat, lon, name:t.brand||t.name||t.operator||"Tankstelle", hgv: t.hgv==="yes" || t["fuel:HGV_diesel"]==="yes" || t.highway==="services", motorway: /Rastst|Autohof|services|Raststätte|Aire/i.test(t.name||""), price:null, src:null}; }).filter(Boolean);
+    // Preise: Live wo möglich, sonst Landes-Durchschnitt
+    const midP = seg[Math.floor(seg.length/2)] || seg[0]; const ccMid = (r.edges.find(e=>e.s1>=Math.floor((i0+i1)/2))||{}).cc;
+    let live = [];
+    const centers = [seg[0], midP, seg[seg.length-1]].filter(Boolean);
+    if(ccMid==="FR"){ for(const c of centers) live = live.concat(await frPrices(c[0], c[1], Math.min(15, radius+5), s.fuel)); }
+    if(ccMid==="DE" && s.tkKey){ for(const c of centers) live = live.concat(await dePrices(c[0], c[1], Math.min(25, radius+5), s.fuel, s.tkKey)); }
+    live = live.filter(l=>nearest([l.lat,l.lon])<=radius);
+    for(const l of live){ const m = list.find(o=>hav([o.lat,o.lon],[l.lat,l.lon])<0.15); if(m){ m.price=l.price; m.src=l.src; } else list.push({...l, hgv:false}); }
+    const avg = (PRICES[s.fuel]||{})[ccMid] || DEFAULT_PRICE[s.fuel];
+    const liters = tank - reserveL;
+    list = list.map(o=>{ const off=nearest([o.lat,o.lon]); const detourKm = off<0.3?0:off*2*1.3; const p=o.price??avg;
+      const effective = p + (detourKm*(s.cons/100)*p)/liters; // Abstecher-Sprit auf Liter umgelegt
+      return {...o, off, detourKm, p, effective, est:o.price==null}; });
+    const dedup = []; for(const o of list.sort((a,b)=>a.effective-b.effective)){ if(!dedup.some(d=>hav([d.lat,d.lon],[o.lat,o.lon])<0.1)) dedup.push(o); }
+    const box = document.getElementById("stop"+k);
+    if(!dedup.length){ box.textContent = `Keine Tankstellen innerhalb von ${radius} km gefunden. Abstecher in den Einstellungen vergrößern.`; continue; }
+    const top = dedup.slice(0,6); const worst = Math.max(...dedup.filter(d=>!d.est).map(d=>d.p), avg);
+    box.className="stations";
+    box.innerHTML = top.map((o,j)=>{ const save = (worst - o.effective)*liters;
+      return `<div class="st ${j===0&&!o.est?"best":""}" data-lat="${o.lat}" data-lon="${o.lon}">
+        <span class="price">${o.p.toFixed(3).replace(".",",")} €${o.est?"*":""}</span>
+        <b>${esc(o.name)}</b><div class="meta">${o.detourKm<0.5?"direkt an der Route":`${o.off.toFixed(1).replace(".",",")} km neben der Route (Abstecher ca. ${o.detourKm.toFixed(0)} km)`}${o.hgv?" · viel Platz (LKW-tauglich)":""}${!o.est&&save>1?` · spart ca. ${fmtEur(save)} pro Tankfüllung`:""}</div>
+        <div class="meta">${o.est?"* Landes-Durchschnitt "+cname(ccMid):esc(o.src)}</div></div>`; }).join("");
+    box.querySelectorAll(".st").forEach(el=>el.onclick=()=>map.setView([+el.dataset.lat,+el.dataset.lon],14));
+    top.forEach((o,j)=>L.marker([o.lat,o.lon],{icon:L.divIcon({className:"",html:`<div class="fuelpin ${j===0&&!o.est?"cheap":""}">⛽</div>`,iconSize:[22,22],iconAnchor:[11,11]})}).addTo(fuelLayer).bindTooltip(`${esc(o.name)} · ${o.p.toFixed(3).replace(".",",")} €${o.est?" (Ø)":""}`));
+    await sleep(1200); // Overpass schonen
+  }
+  btn.disabled = false;
+}
+
+/* ---------- Ablauf ---------- */
+$("#go").onclick = async () => {
+  if(!pts.from || !pts.to){ setStatus("Bitte Start und Ziel aus der Vorschlagsliste wählen oder auf die Karte tippen.", true); return; }
+  const s = settings(); const btn = $("#go"); btn.disabled = true; $("#cards").innerHTML=""; $("#detail").innerHTML=""; fuelLayer.clearLayers();
+  try{
+    const cands = await fetchCandidates(s);
+    const analysed = [];
+    for(let i=0;i<cands.length;i++){
+      setStatus(`Prüfe Strecke ${i+1} von ${cands.length}: Tempo, Steigungen, Maut …`);
+      try{ const ed = await traceEdges(cands[i].trip.legs[0]); analysed.push(analyse(cands[i], s, ed)); }catch(e){ console.warn(e); }
+    }
+    if(!analysed.length) throw new Error("Die Strecken konnten nicht ausgewertet werden. Bitte später nochmal versuchen.");
+    results = pickThree(analysed);
+    setStatus(`${analysed.length} mögliche Strecken geprüft, alle passend für ${s.height.toFixed(2).replace(".",",")} m Höhe, ${s.width.toFixed(2).replace(".",",")} m Breite, ${s.length.toFixed(1).replace(".",",")} m Länge und ${s.weight.toFixed(1).replace(".",",")} t.`);
+    selectRoute(1);
+  }catch(e){ setStatus(e.message, true); }
+  btn.disabled = false;
+};
+</script>
+</body>
+</html>
