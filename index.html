@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-title" content="Gespann-Navi">
 <meta name="theme-color" content="#14366b">
 <title>Gespann-Navi</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Inter:wght@400;500;600&display=swap">
@@ -602,6 +605,7 @@ async function fuelPlan(r){
 }
 
 /* ---------- Ablauf ---------- */
+if("serviceWorker" in navigator && location.protocol==="https:"){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 $("#go").onclick = async () => {
   if(!pts.from || !pts.to){ setStatus("Bitte Start und Ziel aus der Vorschlagsliste wählen oder auf die Karte tippen.", true); return; }
   const s = settings(); const btn = $("#go"); btn.disabled = true; $("#cards").innerHTML=""; $("#detail").innerHTML=""; fuelLayer.clearLayers();
