@@ -47,6 +47,8 @@ main{flex:1;display:flex;min-height:0}
   main{flex-direction:column}
   #map{flex:none;height:42vh}
   #panel{width:100%;border-right:0;border-top:1px solid var(--line);flex:1}
+  body.form-mode #map{display:none}
+  body.form-mode #panel{border-top:0}
 }
 .tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:5}
 .tabs button{flex:1;padding:12px 8px;border:0;background:none;color:var(--muted);font:600 15px var(--font-display);letter-spacing:.03em;text-transform:uppercase;cursor:pointer;border-bottom:3px solid transparent}
@@ -184,7 +186,7 @@ footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
       <fieldset>
         <legend>Live-Spritpreise (optional)</legend>
         <label>Tankerkönig API-Key (Deutschland)<input id="tkKey" placeholder="kostenlos auf creativecommons.tankerkoenig.de"></label>
-        <p class="hint">Frankreich hat Live-Preise ohne Key. Für andere Länder rechnet die App mit Landes-Durchschnittspreisen.</p>
+        <p class="hint">Live-Preise ohne Key: Österreich, Frankreich, Spanien. Deutschland mit Key: auf <b>creativecommons.tankerkoenig.de</b> kostenlos registrieren, den Key per Mail erhalten und hier einfügen. Andere Länder: Landes-Durchschnitt.</p>
       </fieldset>
       <button class="btn" id="save">Gespann speichern</button>
       <div id="saved" class="hint"></div>
@@ -276,6 +278,10 @@ loadSettings();
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-selected", x===b));
   document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== b.dataset.view);
+  // Auf dem Handy: Karte beim Gespann-Formular ausblenden, damit das Formular den ganzen Bildschirm hat
+  document.body.classList.toggle("form-mode", b.dataset.view === "v-gespann");
+  $("#panel").scrollTop = 0; window.scrollTo(0,0);
+  if(b.dataset.view === "v-route") setTimeout(()=>map.invalidateSize(), 50);
 });
 
 /* ---------- Karte ---------- */
@@ -543,6 +549,23 @@ async function frPrices(lat, lon, radiusKm, fuelType){
   const url = `https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/prix-des-carburants-en-france-flux-instantane-v2/records?limit=50&where=${encodeURIComponent(where)}`;
   try{ const j = await fetch(url).then(r=>r.json()); return (j.results||[]).map(s=>({lat:s.geom.lat, lon:s.geom.lon, name:(s.adresse||"")+" "+(s.ville||""), price: fuelType==="diesel" ? s.gazole_prix : (s.e10_prix||s.sp95_prix), src:"Live (prix-carburants.gouv.fr)"})).filter(s=>s.price); }catch(e){ return []; }
 }
+async function atPrices(lat, lon, fuelType){
+  const t = fuelType==="diesel" ? "DIE" : "SUP";
+  try{ const j = await fetch(`https://api.e-control.at/sprit/1.0/search/gas-stations/by-address?latitude=${lat}&longitude=${lon}&fuelType=${t}&includeClosed=false`).then(r=>r.json());
+    return (j||[]).filter(s=>s.prices&&s.prices.length&&s.location).map(s=>({lat:s.location.latitude, lon:s.location.longitude, name:s.name+(s.location.city?", "+s.location.city:""), price:s.prices[0].amount, src:"Live (E-Control Österreich)"})); }catch(e){ return []; }
+}
+const esCache = {};
+async function esPrices(lat, lon, fuelType){
+  try{
+    const g = await fetch(`${PHOTON}/reverse?lat=${lat}&lon=${lon}`).then(r=>r.json());
+    const pc = g.features && g.features[0] && g.features[0].properties.postcode; if(!pc) return [];
+    const prov = String(pc).padStart(5,"0").slice(0,2);
+    if(!esCache[prov]) esCache[prov] = fetch(`https://sedeaplicaciones.minetur.gob.es/ServiciosRESTCarburantes/PreciosCarburantes/EstacionesTerrestres/FiltroProvincia/${prov}`).then(r=>r.json());
+    const j = await esCache[prov]; const num = v => parseFloat(String(v||"").replace(",","."));
+    const key = fuelType==="diesel" ? "Precio Gasoleo A" : "Precio Gasolina 95 E5";
+    return (j.ListaEESSPrecio||[]).map(x=>({lat:num(x["Latitud"]), lon:num(x["Longitud (WGS84)"]), name:(x["Rótulo"]||"Gasolinera")+", "+(x["Localidad"]||""), price:num(x[key]), src:"Live (Ministerio, Spanien)"})).filter(x=>x.price>0 && hav([lat,lon],[x.lat,x.lon])<30);
+  }catch(e){ return []; }
+}
 async function dePrices(lat, lon, radiusKm, fuelType, key){
   const t = fuelType==="diesel" ? "diesel" : "e10";
   try{ const j = await fetch(`https://creativecommons.tankerkoenig.de/json/list.php?lat=${lat}&lng=${lon}&rad=${Math.min(25,radiusKm)}&sort=dist&type=${t}&apikey=${encodeURIComponent(key)}`).then(r=>r.json());
@@ -578,8 +601,14 @@ async function fuelPlan(r){
     const midP = seg[Math.floor(seg.length/2)] || seg[0]; const ccMid = (r.edges.find(e=>e.s1>=Math.floor((i0+i1)/2))||{}).cc;
     let live = [];
     const centers = [seg[0], midP, seg[seg.length-1]].filter(Boolean);
-    if(ccMid==="FR"){ for(const c of centers) live = live.concat(await frPrices(c[0], c[1], Math.min(15, radius+5), s.fuel)); }
-    if(ccMid==="DE" && s.tkKey){ for(const c of centers) live = live.concat(await dePrices(c[0], c[1], Math.min(25, radius+5), s.fuel, s.tkKey)); }
+    const ccAt = pt => { let bi=0, bd=1e9; r.shape.forEach((q,i)=>{ if(i%20) return; const d=Math.abs(q[0]-pt[0])+Math.abs(q[1]-pt[1]); if(d<bd){bd=d;bi=i;} }); return (r.edges.find(e=>e.s1>=bi)||{}).cc; };
+    const liveCountries = new Set();
+    for(const c of centers){ const cc = ccAt(c) || ccMid; let got = [];
+      if(cc==="FR") got = await frPrices(c[0], c[1], Math.min(15, radius+5), s.fuel);
+      else if(cc==="AT") got = await atPrices(c[0], c[1], s.fuel);
+      else if(cc==="ES") got = await esPrices(c[0], c[1], s.fuel);
+      else if(cc==="DE" && s.tkKey) got = await dePrices(c[0], c[1], Math.min(25, radius+5), s.fuel, s.tkKey);
+      if(got.length) liveCountries.add(cc); live = live.concat(got); }
     live = live.filter(l=>nearest([l.lat,l.lon])<=radius);
     for(const l of live){ const m = list.find(o=>hav([o.lat,o.lon],[l.lat,l.lon])<0.15); if(m){ m.price=l.price; m.src=l.src; } else list.push({...l, hgv:false}); }
     const avg = (PRICES[s.fuel]||{})[ccMid] || DEFAULT_PRICE[s.fuel];
@@ -587,7 +616,8 @@ async function fuelPlan(r){
     list = list.map(o=>{ const off=nearest([o.lat,o.lon]); const detourKm = off<0.3?0:off*2*1.3; const p=o.price??avg;
       const effective = p + (detourKm*(s.cons/100)*p)/liters; // Abstecher-Sprit auf Liter umgelegt
       return {...o, off, detourKm, p, effective, est:o.price==null}; });
-    const dedup = []; for(const o of list.sort((a,b)=>a.effective-b.effective)){ if(!dedup.some(d=>hav([d.lat,d.lon],[o.lat,o.lon])<0.1)) dedup.push(o); }
+    const hasLive = list.some(o=>!o.est);
+    const dedup = []; for(const o of list.sort((a,b)=>(a.effective+(hasLive&&a.est?1:0))-(b.effective+(hasLive&&b.est?1:0)))){ if(!dedup.some(d=>hav([d.lat,d.lon],[o.lat,o.lon])<0.1)) dedup.push(o); }
     const box = document.getElementById("stop"+k);
     if(!dedup.length){ box.textContent = `Keine Tankstellen innerhalb von ${radius} km gefunden. Abstecher in den Einstellungen vergrößern.`; continue; }
     const top = dedup.slice(0,6); const worst = Math.max(...dedup.filter(d=>!d.est).map(d=>d.p), avg);
@@ -597,6 +627,7 @@ async function fuelPlan(r){
         <span class="price">${o.p.toFixed(3).replace(".",",")} €${o.est?"*":""}</span>
         <b>${esc(o.name)}</b><div class="meta">${o.detourKm<0.5?"direkt an der Route":`${o.off.toFixed(1).replace(".",",")} km neben der Route (Abstecher ca. ${o.detourKm.toFixed(0)} km)`}${o.hgv?" · viel Platz (LKW-tauglich)":""}${!o.est&&save>1?` · spart ca. ${fmtEur(save)} pro Tankfüllung`:""}</div>
         <div class="meta">${o.est?"* Landes-Durchschnitt "+cname(ccMid):esc(o.src)}</div></div>`; }).join("");
+    if(ccMid==="DE" && !s.tkKey) box.insertAdjacentHTML("beforeend", `<p class="hint">Für Live-Preise in Deutschland unter „Mein Gespann“ einen kostenlosen Tankerkönig-Key eintragen.</p>`);
     box.querySelectorAll(".st").forEach(el=>el.onclick=()=>map.setView([+el.dataset.lat,+el.dataset.lon],14));
     top.forEach((o,j)=>L.marker([o.lat,o.lon],{icon:L.divIcon({className:"",html:`<div class="fuelpin ${j===0&&!o.est?"cheap":""}">⛽</div>`,iconSize:[22,22],iconAnchor:[11,11]})}).addTo(fuelLayer).bindTooltip(`${esc(o.name)} · ${o.p.toFixed(3).replace(".",",")} €${o.est?" (Ø)":""}`));
     await sleep(1200); // Overpass schonen
