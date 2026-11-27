@@ -447,9 +447,12 @@ async function traceEdges(leg){
 function analyse(cand, s, ed){
   const {edges, shape} = ed; const leg = cand.trip.legs[0];
   const cons = s.cons || 12, fuelType = s.fuel;
-  let ascent=0, elevRef=null, km=0, hours=0, hoursCar=0, hwyKm=0, townKm=0, smallKm=0, maxGrade=0, flatFuel=0;
+  let townEntries=0, wasTown=false, accelFuel=0, ascent=0, elevRef=null, km=0, hours=0, hoursCar=0, hwyKm=0, townKm=0, smallKm=0, maxGrade=0, flatFuel=0;
   const byCC = {}; const cum = []; // kumulierte km/Liter je Kante
   const cc0 = () => ({km:0, tollKm:0, hwyKm:0, fuel:0, names:new Set()});
+  const massKg = (s.weight||3.5)*1000;
+  const energy = fuelType==="diesel" ? 35.8e6*0.25 : 32.0e6*0.22; // J pro Liter, die als Bewegungs-/Hubarbeit ankommen
+  const accel = (v1, v0) => v1>v0 ? 0.5*massKg*((v1/3.6)**2-(v0/3.6)**2)/energy : 0; // Liter fürs Beschleunigen
   for(const e of edges){
     const c = e.cc || "??"; const lim = s.limits(c); const limAlt = s.solo ? (LIMITS[c]||{ab:100,ls:80}) : (LIMITS_CAR[c]||{ab:130,ls:90});
     const hwy = e.cls==="motorway" || (e.cls==="trunk" && e.speed>=100);
@@ -460,21 +463,24 @@ function analyse(cand, s, ed){
     if(hwy) hwyKm += e.len;
     const town = !hwy && e.cls!=="service_other" && ((e.limit!==null && e.limit<=50) || (e.density>=5 && e.speed<=55));
     if(town) townKm += e.len;
+    // Ortseinfahrt: abbremsen auf 50 und danach wieder auf Landstraßen-Tempo beschleunigen
+    if(town && !wasTown && e.len>0.05){ townEntries++; accelFuel += accel(Math.min(s.vLand||80, lim.ls), 50); }
+    wasTown = town;
     if(["unclassified","residential","service_other"].includes(e.cls) && !town) smallKm += e.len;
     if(!e.tunnel && !e.bridge){ if(e.elev!==null){ if(elevRef===null) elevRef=e.elev; else if(e.elev-elevRef>15){ ascent+=e.elev-elevRef; elevRef=e.elev; } else if(elevRef-e.elev>15) elevRef=e.elev; } if(e.len>=0.3) maxGrade = Math.max(maxGrade, e.grade); }
-    // Verbrauch: dein Ø-Wert gilt bei ca. 85 km/h; Luftwiderstand steigt mit dem Quadrat, Stadt = Stop-and-go
-    const f = v<=55 ? 1.18 : 0.35 + 0.65*Math.pow(v/s.refSpeed,2);
+    // Verbrauch: dein Ø-Wert gilt bei gleichmäßiger Fahrt (85 km/h Gespann, 100 km/h solo); Luftwiderstand steigt mit dem Quadrat.
+    // In Orten Stop-and-go (Ampeln, Kreisverkehre), auf langsamen kurvigen Straßen ständiges Bremsen/Beschleunigen.
+    const f = town ? 1.6 : v<=60 ? 1.15 : 0.35 + 0.65*Math.pow(v/s.refSpeed,2);
     const l = e.len/100*cons*f; flatFuel += l;
     const b = byCC[c] || (byCC[c]=cc0());
     b.km += e.len; b.fuel += l; if(hwy) b.hwyKm += e.len; if(e.toll) b.tollKm += e.len; e.names.forEach(n=>b.names.add(n));
     cum.push({km, fuel:flatFuel, s1:e.s1});
   }
   hours += leg.maneuvers.length*2/3600; // Abbiegen, Kreuzungen
-  // Höhenmeter
-  const massKg = (s.weight||3.5)*1000;
-  const energy = fuelType==="diesel" ? 35.8e6*0.33 : 32.0e6*0.27; // J pro Liter, die tatsächlich als Hubarbeit ankommen
+  // Höhenmeter (Hubarbeit) + Abbiegen/Kreuzungen (abbremsen auf ca. 20 km/h und wieder beschleunigen)
   const climbFuel = massKg*9.81*ascent/energy;
-  const fuel = flatFuel + climbFuel;
+  const turnFuel = leg.maneuvers.length * accel(50, 20);
+  const fuel = flatFuel + climbFuel + accelFuel + turnFuel;
   const scale = flatFuel>0 ? fuel/flatFuel : 1;
   cum.forEach(c => c.fuel *= scale);
   let fuelCost = 0; const pr = PRICES[fuelType]||{};
@@ -489,7 +495,7 @@ function analyse(cand, s, ed){
   }
   const tollSum = toll.reduce((a,t)=>a+t.p,0);
   const countries = []; edges.forEach(e => { if(e.cc && countries[countries.length-1]!==e.cc) countries.push(e.cc); });
-  return {solo:s.solo, cand, leg, shape, edges, cum, km, hours, hoursCar, hwyKm, townKm, smallKm, maxGrade, ascent, fuel, fuelCost, toll, tollSum, byCC,
+  return {townEntries, climbFuel, accelFuel:accelFuel+turnFuel, solo:s.solo, cand, leg, shape, edges, cum, km, hours, hoursCar, hwyKm, townKm, smallKm, maxGrade, ascent, fuel, fuelCost, toll, tollSum, byCC,
     countries:[...new Set(countries)], valTime:cand.trip.summary.time/3600, total: fuelCost + tollSum};
 }
 
@@ -497,14 +503,16 @@ function pickThree(list){
   const cats = [
     {key:"short", title:"Kürzeste", sup:"kürzeste", color:"var(--short)", hex:"#e0a100", score:r=>r.km, why:"wenigste Kilometer"},
     {key:"fast",  title:"Schnellste", sup:"schnellste", color:"var(--fast)", hex:"#1d5bd6", score:r=>r.hours, why:"kürzeste Fahrzeit"},
-    {key:"eco",   title:"Spritsparend", sup:"spritsparendste", color:"var(--eco)", hex:"#2f8a3b", score:r=>r.fuel + r.townKm*0.02, why:"wenig Liter: kurze Strecke, wenig Steigung, wenig Ortsdurchfahrten"}
+    {key:"eco",   title:"Spritsparend", sup:"spritsparendste", color:"var(--eco)", hex:"#2f8a3b", score:r=>r.fuel, why:"wenigste Liter: gleichmäßiges Tempo, wenig Steigung, wenig Ortsdurchfahrten"}
   ];
   const used = new Set(); const out = [];
   for(const c of cats){
     const sorted = [...list].sort((a,b)=>c.score(a)-c.score(b));
     const best = sorted[0]; const minH = Math.min(...list.map(r=>r.hours)), minKm = Math.min(...list.map(r=>r.km));
     // Ersatz nur, wenn er nicht viel länger dauert oder weiter ist
-    let pick = used.has(best) ? (sorted.find(r=>!used.has(r) && r.hours<=minH*1.25 && r.km<=minKm*1.12) || best) : best;
+    // Ersatz nur, wenn er in der eigenen Kategorie fast genauso gut ist (max. 5 % schlechter) und nirgends deutlich schlechter
+    let pick = used.has(best) ? (sorted.find(r=>!used.has(r) && c.score(r)<=c.score(best)*1.05 && r.hours<=minH*1.25 && r.km<=minKm*1.12
+        && (c.key!=="eco" || (r.ascent<=best.ascent*1.1+50 && r.townEntries<=best.townEntries+2))) || best) : best;
     const same = list.length>=1 && pick!==best ? out.find(o=>o.r===best) : null;
     const sameAs = pick===best && used.has(best) ? out.find(o=>o.r===best) : null;
     used.add(pick); out.push({...c, r:pick, dupOf: same ? same.title : null, same: sameAs ? sameAs.title : null});
@@ -525,7 +533,7 @@ function renderCards(){
   $("#cards").innerHTML = results.map((x,i)=>{ const r=x.r;
     const facts = [
       `${Math.round(r.hwyKm/r.km*100)} % Autobahn`,
-      `${fmtKm(r.townKm)} km durch Orte`,
+      `${r.townEntries} Ortsdurchfahrten (${fmtKm(r.townKm)} km)`,
       `↗ ${Math.round(r.ascent).toLocaleString("de-DE")} Hm bergauf`,
       r.maxGrade>=8 ? `<span class="w">steilste Stelle ca. ${Math.round(r.maxGrade)} %</span>` : `max. ca. ${Math.round(r.maxGrade)} % Steigung`,
       r.smallKm>3 ? `<span class="w">${fmtKm(r.smallKm)} km kleine Straßen</span>` : null,
@@ -542,7 +550,7 @@ function renderCards(){
         <div class="kpi"><b>${fmtH(r.hoursCar)}</b><span>zum Vergleich: ${r.solo?"mit Wohnwagen":"ohne Wohnwagen"}</span></div>
       </div>
       <div class="facts">${facts}</div>
-      ${x.dupOf ? `<p class="note">Die ${x.sup} Strecke ist hier dieselbe wie „${x.dupOf}“. Das hier ist die nächstbeste Alternative.</p>` : ""}${x.same ? `<p class="note">Das ist dieselbe Strecke wie „${x.same}“. Es gibt keine sinnvolle Alternative, die hier besser abschneidet.</p>` : ""}
+      ${x.dupOf ? `<p class="note">Die ${x.sup} Strecke ist hier dieselbe wie „${x.dupOf}“. Das hier ist die nächstbeste Alternative.</p>` : ""}${x.same ? `<p class="note">Die ${x.sup} Strecke ist dieselbe wie „${x.same}“. Jede andere Strecke wäre hier deutlich schlechter.</p>` : ""}
     </div>`; }).join("");
   document.querySelectorAll(".card").forEach(c => { c.onclick = () => selectRoute(+c.dataset.i); c.onkeydown = e => { if(e.key==="Enter") selectRoute(+c.dataset.i); }; });
 }
@@ -562,7 +570,7 @@ function selectRoute(i){
     <details><summary>Maut &amp; Vignetten</summary><div class="tblwrap"><table><tr><th>Land</th><th>Posten</th><th class="r">€</th></tr>${tollRows}</table></div>
       <p class="hint">Richtwerte für Auto + Wohnwagen. Brücken, Tunnel (z. B. Mont Blanc, Fréjus) und Fähren sind nicht enthalten.</p></details>
     <details><summary>Länder, Tempo &amp; Sprit</summary><div class="tblwrap"><table><tr><th>Land</th><th class="r">Strecke</th><th class="r">Autobahn</th><th class="r">Sprit</th><th class="r">Ø-Preis</th></tr>${ccRows}</table></div>
-      <p class="hint">Gerechnet mit ${r.solo?"Pkw-Tempo":"Gespann-Tempo"}: ${[...new Set(Object.keys(r.byCC))].map(c=>{const s=profile(settings()); const l=s.limits(c); return `${cname(c)} ${Math.min(s.vAb,l.ab)}/${Math.min(s.vLand,l.ls)}`;}).join(", ")} km/h (Autobahn/Landstraße). Höhenmeter: ${Math.round(r.ascent).toLocaleString("de-DE")} m bergauf. Der Mehrverbrauch am Berg ist eingerechnet.</p></details>
+      <p class="hint">Gerechnet mit ${r.solo?"Pkw-Tempo":"Gespann-Tempo"}: ${[...new Set(Object.keys(r.byCC))].map(c=>{const s=profile(settings()); const l=s.limits(c); return `${cname(c)} ${Math.min(s.vAb,l.ab)}/${Math.min(s.vLand,l.ls)}`;}).join(", ")} km/h (Autobahn/Landstraße). Höhenmeter: ${Math.round(r.ascent).toLocaleString("de-DE")} m bergauf. Eingerechnet sind ca. ${r.climbFuel.toFixed(1).replace(".",",")} l für Steigungen und ${r.accelFuel.toFixed(1).replace(".",",")} l fürs Bremsen und Anfahren (${r.townEntries} Ortsdurchfahrten, Kreuzungen, Kreisverkehre).</p></details>
     <details><summary>Wegbeschreibung</summary><div class="maneuvers"><ol>${man}</ol></div></details>`;
   $("#fuelBtn").onclick = () => fuelPlan(r);
 }
