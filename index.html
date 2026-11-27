@@ -72,6 +72,9 @@ legend{font:600 14px var(--font-display);text-transform:uppercase;letter-spacing
 .ac li{padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--fg)}
 .ac li small{color:var(--muted)}
 .ac li:hover,.ac li.sel{background:var(--chip)}
+.seg{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
+.seg button{border:0;background:none;color:var(--muted);padding:11px 8px;font:600 15px var(--font-display);letter-spacing:.02em;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-fg)}
 .iconbtn{border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:13px;white-space:nowrap}
 #status{font-size:13px;color:var(--muted);min-height:1em}
 #status.err{color:var(--bad)}
@@ -127,6 +130,11 @@ footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
     </div>
 
     <div class="view" id="v-route">
+      <div class="seg" role="group" aria-label="Fahrzeug">
+        <button type="button" id="modeG" aria-pressed="true">🚙 + Wohnwagen</button>
+        <button type="button" id="modeS" aria-pressed="false">🚙 ohne Wohnwagen</button>
+      </div>
+      <input type="hidden" id="mode" value="gespann">
       <div class="ac">
         <label for="from">Start</label>
         <div class="row">
@@ -172,6 +180,15 @@ footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
           <label>Autobahn (km/h)<input id="vAb" type="number" step="5" value="100"></label>
         </div>
         <p class="hint">Es gilt immer das Niedrigere: dein Wert oder das Gespann-Tempolimit des jeweiligen Landes (z. B. Italien 80, Schweiz 80).</p>
+      </fieldset>
+      <fieldset>
+        <legend>Ohne Wohnwagen</legend>
+        <div class="grid3">
+          <label>Landstraße (km/h)<input id="vLandSolo" type="number" step="5" value="100"></label>
+          <label>Autobahn (km/h)<input id="vAbSolo" type="number" step="5" value="130"></label>
+          <label>Ø-Verbrauch (l/100 km)<input id="consSolo" type="number" step="0.5" value="7"></label>
+        </div>
+        <p class="hint">Gilt, wenn oben bei „Route“ „ohne Wohnwagen“ gewählt ist. Auch hier zählt das Tempolimit des Landes.</p>
       </fieldset>
       <fieldset>
         <legend>Verbrauch und Tank</legend>
@@ -232,6 +249,7 @@ const VIGNETTE = {
   BG:{p:8.00,  t:"Wochen-Vignette"},
   MD:{p:4.00,  t:"7-Tages-Vignette"}
 };
+const VIGNETTE_SOLO = {CH:{p:43.00, t:"Jahresvignette (40 CHF)"}, HU:{p:17.00, t:"10-Tages-Vignette D1"}, RO:{p:3.00, t:"7-Tages-Rovinieta"}};
 // Sondermautstrecken in Österreich (zusätzlich zur Vignette)
 const AT_SPECIAL = [
   {re:/\bA ?13\b|Brenner/i, name:"Brenner-Autobahn A13", p:12.50},
@@ -270,11 +288,26 @@ async function postJSON(url, body){
 }
 
 /* ---------- Einstellungen ---------- */
-const FIELDS = ["height","width","length","weight","trailer","vLand","vAb","fuel","cons","tank","reserve","detour","tkKey"];
+const FIELDS = ["height","width","length","weight","trailer","vLand","vAb","fuel","cons","tank","reserve","detour","tkKey","vLandSolo","vAbSolo","consSolo","mode"];
+// Pkw-Tempolimits ohne Anhänger (DE: Richtgeschwindigkeit 130)
+const LIMITS_CAR = {DE:{ab:130,ls:100},AT:{ab:130,ls:100},CH:{ab:120,ls:80},IT:{ab:130,ls:90},FR:{ab:130,ls:80},ES:{ab:120,ls:90},PT:{ab:120,ls:90},SI:{ab:130,ls:90},HR:{ab:130,ls:90},CZ:{ab:130,ls:90},SK:{ab:130,ls:90},HU:{ab:130,ls:90},PL:{ab:140,ls:90},NL:{ab:100,ls:80},BE:{ab:120,ls:90},LU:{ab:130,ls:90},DK:{ab:130,ls:80},SE:{ab:110,ls:80},NO:{ab:110,ls:80},GR:{ab:130,ls:90},RO:{ab:130,ls:90},BG:{ab:140,ls:90},GB:{ab:112,ls:96},IE:{ab:120,ls:80},FI:{ab:120,ls:80}};
+// Effektives Profil: mit oder ohne Wohnwagen
+function profile(raw){
+  const s = Object.assign({}, raw); s.solo = raw.mode === "solo";
+  if(s.solo){ s.vAb = raw.vAbSolo||130; s.vLand = raw.vLandSolo||100; s.cons = raw.consSolo||7; s.weight = Math.max(1, (raw.weight||3.5)-(raw.trailer||0)); }
+  s.limits = c => s.solo ? (LIMITS_CAR[c]||{ab:130,ls:90}) : (LIMITS[c]||{ab:100,ls:80});
+  s.refSpeed = s.solo ? 100 : 85;
+  return s;
+}
 function loadSettings(){ try{ const s=JSON.parse(localStorage.getItem("gespann")||"{}"); FIELDS.forEach(f=>{ if(s[f]!==undefined) $("#"+f).value=s[f]; }); }catch(e){} }
 function settings(){ const s={}; FIELDS.forEach(f=>{ const el=$("#"+f); s[f]= el.type==="number" ? parseFloat(el.value) : el.value.trim(); }); return s; }
 $("#save").onclick = () => { try{ localStorage.setItem("gespann", JSON.stringify(settings())); $("#saved").textContent="Gespeichert auf diesem Gerät."; }catch(e){ $("#saved").textContent="Speichern nicht möglich (privater Modus?). Die Werte gelten bis zum Schließen."; } };
 loadSettings();
+function setMode(m){ $("#mode").value = m; $("#modeG").setAttribute("aria-pressed", m!=="solo"); $("#modeS").setAttribute("aria-pressed", m==="solo");
+  try{ const st=JSON.parse(localStorage.getItem("gespann")||"{}"); st.mode=m; localStorage.setItem("gespann", JSON.stringify(st)); }catch(e){}
+  $("#go").textContent = m==="solo" ? "3 Routen berechnen (ohne Wohnwagen)" : "3 Routen berechnen"; }
+$("#modeG").onclick = () => setMode("gespann"); $("#modeS").onclick = () => setMode("solo");
+setMode($("#mode").value === "solo" ? "solo" : "gespann");
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
   document.querySelectorAll(".tabs button").forEach(x => x.setAttribute("aria-selected", x===b));
   document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== b.dataset.view);
@@ -357,7 +390,7 @@ function truckOptions(s, extra){
 const VARIANTS = [
   {key:"std",  label:"Standard", extra:{}, alternates:2},
   {key:"short",label:"kürzeste", extra:{shortest:true}},
-  {key:"land", label:"Landstraße", extra:{use_highways:0, top_speed:80}},
+  {key:"land", label:"Landstraße", extra:{use_highways:0}},
   {key:"mix",  label:"gemischt", extra:{use_highways:0.4, top_speed:90}},
   {key:"notoll",label:"mautfrei", extra:{use_tolls:0}}
 ];
@@ -368,7 +401,9 @@ async function fetchCandidates(s){
   const cands = []; let lastErr = null;
   for(const v of VARIANTS){
     setStatus(`Suche Routen für dein Gespann … (${v.label})`);
-    const body = {locations:locs, costing:"truck", costing_options:{truck:truckOptions(s, v.extra)}, units:"kilometers", language:"de-DE"};
+    const body = s.solo
+      ? {locations:locs, costing:"auto", costing_options:{auto:Object.assign({top_speed:Math.min(140,s.vAb||130), use_ferry:parseFloat($("#ferry").value), exclude_unpaved:true}, v.extra)}, units:"kilometers", language:"de-DE"}
+      : {locations:locs, costing:"truck", costing_options:{truck:truckOptions(s, v.extra)}, units:"kilometers", language:"de-DE"};
     if(v.alternates) body.alternates = v.alternates;
     const j = await postJSON(VALHALLA+"/route", body);
     if(j.error || !j.trip){ lastErr = j.error || "unbekannter Fehler"; continue; }
@@ -415,11 +450,11 @@ function analyse(cand, s, ed){
   const byCC = {}; const cum = []; // kumulierte km/Liter je Kante
   const cc0 = () => ({km:0, tollKm:0, hwyKm:0, fuel:0, names:new Set()});
   for(const e of edges){
-    const c = e.cc || "??"; const lim = LIMITS[c] || {ab:100, ls:80};
+    const c = e.cc || "??"; const lim = s.limits(c); const limAlt = s.solo ? (LIMITS[c]||{ab:100,ls:80}) : (LIMITS_CAR[c]||{ab:130,ls:90});
     const hwy = e.cls==="motorway" || (e.cls==="trunk" && e.speed>=100);
     const cap = hwy ? Math.min(s.vAb||100, lim.ab) : Math.min(s.vLand||80, lim.ls);
     const v = Math.max(5, Math.min(e.speed, cap));
-    const vCar = Math.max(5, Math.min(e.speed, hwy?130:100));
+    const vCar = s.solo ? Math.max(5, Math.min(e.speed, hwy?Math.min(s.vAb_g||100,limAlt.ab):Math.min(s.vLand_g||80,limAlt.ls))) : Math.max(5, Math.min(e.speed, hwy?limAlt.ab:limAlt.ls));
     hours += e.len/v; hoursCar += e.len/vCar; km += e.len;
     if(hwy) hwyKm += e.len;
     const town = !hwy && e.cls!=="service_other" && ((e.limit!==null && e.limit<=50) || (e.density>=5 && e.speed<=55));
@@ -427,7 +462,7 @@ function analyse(cand, s, ed){
     if(["unclassified","residential","service_other"].includes(e.cls) && !town) smallKm += e.len;
     if(!e.tunnel && !e.bridge){ if(e.elev!==null){ if(elevRef===null) elevRef=e.elev; else if(e.elev-elevRef>15){ ascent+=e.elev-elevRef; elevRef=e.elev; } else if(elevRef-e.elev>15) elevRef=e.elev; } if(e.len>=0.3) maxGrade = Math.max(maxGrade, e.grade); }
     // Verbrauch: dein Ø-Wert gilt bei ca. 85 km/h; Luftwiderstand steigt mit dem Quadrat, Stadt = Stop-and-go
-    const f = v<=55 ? 1.18 : 0.35 + 0.65*Math.pow(v/85,2);
+    const f = v<=55 ? 1.18 : 0.35 + 0.65*Math.pow(v/s.refSpeed,2);
     const l = e.len/100*cons*f; flatFuel += l;
     const b = byCC[c] || (byCC[c]=cc0());
     b.km += e.len; b.fuel += l; if(hwy) b.hwyKm += e.len; if(e.toll) b.tollKm += e.len; e.names.forEach(n=>b.names.add(n));
@@ -446,20 +481,21 @@ function analyse(cand, s, ed){
   // Maut
   const toll = [];
   for(const [c,b] of Object.entries(byCC)){
-    if(TOLL_PER_KM[c] && b.tollKm>1) toll.push({cc:c, what:`Streckenmaut ${fmtKm(b.tollKm)} km × ${TOLL_PER_KM[c].toFixed(2).replace(".",",")} €`, p:b.tollKm*TOLL_PER_KM[c]});
-    if(VIGNETTE[c] && b.hwyKm>2) toll.push({cc:c, what:VIGNETTE[c].t, p:VIGNETTE[c].p});
+    const rate = TOLL_PER_KM[c] ? TOLL_PER_KM[c]*(s.solo?0.65:1) : 0;
+    if(rate && b.tollKm>1) toll.push({cc:c, what:`Streckenmaut ${fmtKm(b.tollKm)} km × ${rate.toFixed(2).replace(".",",")} €`, p:b.tollKm*rate});
+    if(VIGNETTE[c] && b.hwyKm>2){ const solo = s.solo && VIGNETTE_SOLO[c]; toll.push({cc:c, what: solo ? solo.t : VIGNETTE[c].t, p: solo ? solo.p : VIGNETTE[c].p}); }
     if(c==="AT"){ const names=[...b.names].join(" | "); AT_SPECIAL.forEach(sp => { if(sp.re.test(names)) toll.push({cc:c, what:"Sondermaut "+sp.name+" (wahrscheinlich)", p:sp.p}); }); }
   }
   const tollSum = toll.reduce((a,t)=>a+t.p,0);
   const countries = []; edges.forEach(e => { if(e.cc && countries[countries.length-1]!==e.cc) countries.push(e.cc); });
-  return {cand, leg, shape, edges, cum, km, hours, hoursCar, hwyKm, townKm, smallKm, maxGrade, ascent, fuel, fuelCost, toll, tollSum, byCC,
+  return {solo:s.solo, cand, leg, shape, edges, cum, km, hours, hoursCar, hwyKm, townKm, smallKm, maxGrade, ascent, fuel, fuelCost, toll, tollSum, byCC,
     countries:[...new Set(countries)], valTime:cand.trip.summary.time/3600, total: fuelCost + tollSum};
 }
 
 function pickThree(list){
   const cats = [
     {key:"short", title:"Kürzeste", sup:"kürzeste", color:"var(--short)", hex:"#e0a100", score:r=>r.km, why:"wenigste Kilometer"},
-    {key:"fast",  title:"Schnellste", sup:"schnellste", color:"var(--fast)", hex:"#1d5bd6", score:r=>r.hours, why:"kürzeste Fahrzeit mit Gespann-Tempo"},
+    {key:"fast",  title:"Schnellste", sup:"schnellste", color:"var(--fast)", hex:"#1d5bd6", score:r=>r.hours, why:"kürzeste Fahrzeit"},
     {key:"eco",   title:"Spritsparend", sup:"spritsparendste", color:"var(--eco)", hex:"#2f8a3b", score:r=>r.fuel + r.townKm*0.02, why:"wenig Liter: kurze Strecke, wenig Steigung, wenig Ortsdurchfahrten"}
   ];
   const used = new Set(); const out = [];
@@ -502,7 +538,7 @@ function renderCards(){
         <div class="kpi"><b>${r.fuel.toFixed(0)} l</b><span>≈ ${fmtEur(r.fuelCost)} Sprit</span></div>
         <div class="kpi"><b>${fmtEur(r.tollSum)}</b><span>Maut/Vignetten</span></div>
         <div class="kpi"><b>${fmtEur(r.total)}</b><span>Kosten gesamt</span></div>
-        <div class="kpi"><b>${fmtH(r.hoursCar)}</b><span>zum Vergleich: Pkw solo</span></div>
+        <div class="kpi"><b>${fmtH(r.hoursCar)}</b><span>zum Vergleich: ${r.solo?"mit Wohnwagen":"ohne Wohnwagen"}</span></div>
       </div>
       <div class="facts">${facts}</div>
       ${x.dupOf ? `<p class="note">Die ${x.sup} Strecke ist hier dieselbe wie „${x.dupOf}“. Das hier ist die nächstbeste Alternative.</p>` : ""}${x.same ? `<p class="note">Das ist dieselbe Strecke wie „${x.same}“. Es gibt keine sinnvolle Alternative, die hier besser abschneidet.</p>` : ""}
@@ -518,14 +554,14 @@ function selectRoute(i){
   const man = r.leg.maneuvers.map(m=>`<li>${esc(m.instruction)} <small style="color:var(--muted)">${m.length>0?fmtKm(m.length)+" km":""}</small></li>`).join("");
   $("#detail").innerHTML = `
     <details open><summary>Tankplan</summary>
-      <p class="hint">Mit ${$("#fillNow").value} % Tank, ${settings().tank} l Tank und ${settings().reserve} % Reserve. Gesucht wird bis ${settings().detour} km neben der Route.</p>
+      <p class="hint">Mit ${$("#fillNow").value} % Tank, ${profile(settings()).tank} l Tank und ${profile(settings()).reserve} % Reserve. Gesucht wird bis ${settings().detour} km neben der Route.</p>
       <button class="btn secondary" id="fuelBtn">Tankstellen entlang der Route suchen</button>
       <div id="fuelOut" class="stations"></div>
     </details>
     <details><summary>Maut &amp; Vignetten</summary><div class="tblwrap"><table><tr><th>Land</th><th>Posten</th><th class="r">€</th></tr>${tollRows}</table></div>
       <p class="hint">Richtwerte für Auto + Wohnwagen. Brücken, Tunnel (z. B. Mont Blanc, Fréjus) und Fähren sind nicht enthalten.</p></details>
     <details><summary>Länder, Tempo &amp; Sprit</summary><div class="tblwrap"><table><tr><th>Land</th><th class="r">Strecke</th><th class="r">Autobahn</th><th class="r">Sprit</th><th class="r">Ø-Preis</th></tr>${ccRows}</table></div>
-      <p class="hint">Gerechnet mit Gespann-Tempo: ${[...new Set(Object.keys(r.byCC))].map(c=>{const l=LIMITS[c]||{ab:100,ls:80}; const s=settings(); return `${cname(c)} ${Math.min(s.vAb,l.ab)}/${Math.min(s.vLand,l.ls)}`;}).join(", ")} km/h (Autobahn/Landstraße). Höhenmeter: ${Math.round(r.ascent).toLocaleString("de-DE")} m bergauf. Der Mehrverbrauch am Berg ist eingerechnet.</p></details>
+      <p class="hint">Gerechnet mit ${r.solo?"Pkw-Tempo":"Gespann-Tempo"}: ${[...new Set(Object.keys(r.byCC))].map(c=>{const s=profile(settings()); const l=s.limits(c); return `${cname(c)} ${Math.min(s.vAb,l.ab)}/${Math.min(s.vLand,l.ls)}`;}).join(", ")} km/h (Autobahn/Landstraße). Höhenmeter: ${Math.round(r.ascent).toLocaleString("de-DE")} m bergauf. Der Mehrverbrauch am Berg ist eingerechnet.</p></details>
     <details><summary>Wegbeschreibung</summary><div class="maneuvers"><ol>${man}</ol></div></details>`;
   $("#fuelBtn").onclick = () => fuelPlan(r);
 }
@@ -572,7 +608,7 @@ async function dePrices(lat, lon, radiusKm, fuelType, key){
     if(!j.ok) return []; return (j.stations||[]).filter(s=>s.isOpen && s.price).map(s=>({lat:s.lat, lon:s.lng, name:(s.brand||s.name)+", "+s.place, price:s.price, src:"Live (Tankerkönig)"})); }catch(e){ return []; }
 }
 async function fuelPlan(r){
-  const s = settings(); const out = $("#fuelOut"); const btn = $("#fuelBtn"); btn.disabled = true; out.innerHTML = ""; fuelLayer.clearLayers();
+  const s = profile(settings()); const out = $("#fuelOut"); const btn = $("#fuelBtn"); btn.disabled = true; out.innerHTML = ""; fuelLayer.clearLayers();
   const tank = s.tank||70, reserveL = tank*(s.reserve||20)/100; let fuelLeft = tank*(parseFloat($("#fillNow").value)||80)/100;
   const radius = Math.max(1, s.detour||5);
   // Stopps planen
@@ -639,7 +675,7 @@ async function fuelPlan(r){
 if("serviceWorker" in navigator && location.protocol==="https:"){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 $("#go").onclick = async () => {
   if(!pts.from || !pts.to){ setStatus("Bitte Start und Ziel aus der Vorschlagsliste wählen oder auf die Karte tippen.", true); return; }
-  const s = settings(); const btn = $("#go"); btn.disabled = true; $("#cards").innerHTML=""; $("#detail").innerHTML=""; fuelLayer.clearLayers();
+  const s = profile(settings()); s.vAb_g = settings().vAb; s.vLand_g = settings().vLand; const btn = $("#go"); btn.disabled = true; $("#cards").innerHTML=""; $("#detail").innerHTML=""; fuelLayer.clearLayers();
   try{
     const cands = await fetchCandidates(s);
     const analysed = [];
@@ -649,7 +685,7 @@ $("#go").onclick = async () => {
     }
     if(!analysed.length) throw new Error("Die Strecken konnten nicht ausgewertet werden. Bitte später nochmal versuchen.");
     results = pickThree(analysed);
-    setStatus(`${analysed.length} mögliche Strecken geprüft, alle passend für ${s.height.toFixed(2).replace(".",",")} m Höhe, ${s.width.toFixed(2).replace(".",",")} m Breite, ${s.length.toFixed(1).replace(".",",")} m Länge und ${s.weight.toFixed(1).replace(".",",")} t.`);
+    setStatus(s.solo ? `${analysed.length} mögliche Strecken geprüft, gerechnet für dein Auto ohne Wohnwagen.` : `${analysed.length} mögliche Strecken geprüft, alle passend für ${s.height.toFixed(2).replace(".",",")} m Höhe, ${s.width.toFixed(2).replace(".",",")} m Breite, ${s.length.toFixed(1).replace(".",",")} m Länge und ${s.weight.toFixed(1).replace(".",",")} t.`);
     selectRoute(1);
   }catch(e){ setStatus(e.message, true); }
   btn.disabled = false;
