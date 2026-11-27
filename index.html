@@ -429,7 +429,7 @@ async function traceEdges(leg){
   for(let i=0;i<bounds.length-1;i++){
     const part = shape.slice(bounds[i], bounds[i+1]+1);
     if(part.length<2) continue;
-    const j = await postJSON(VALHALLA+"/trace_attributes", {encoded_polyline:encode6(part), shape_match:"edge_walk", costing:"truck",
+    const j = await postJSON(VALHALLA+"/trace_attributes", {encoded_polyline:encode6(part), shape_match:"edge_walk", costing:"auto",
       filters:{attributes:["edge.length","edge.speed","edge.road_class","edge.toll","edge.use","edge.weighted_grade","edge.density","edge.tunnel","edge.bridge","edge.mean_elevation","edge.speed_limit","edge.names","edge.begin_shape_index","edge.end_shape_index","node.admin_index","admin.country_code"],action:"include"}});
     if(j.error || !j.edges){ throw new Error("Streckendetails nicht verfügbar: "+(j.error||"")); }
     let lastCC = edges.length ? edges[edges.length-1].cc : (j.admins&&j.admins[0]&&j.admins[0].country_code);
@@ -534,7 +534,7 @@ function renderCards(){
       <h3>${x.title} <span class="badge">${x.why}</span></h3>
       <div class="kpis">
         <div class="kpi"><b>${fmtKm(r.km)} km</b><span>Strecke</span></div>
-        <div class="kpi"><b>${fmtH(r.hours)}</b><span>Fahrzeit Gespann</span></div>
+        <div class="kpi"><b>${fmtH(r.hours)}</b><span>${r.solo?"Fahrzeit":"Fahrzeit Gespann"}</span></div>
         <div class="kpi"><b>${r.fuel.toFixed(0)} l</b><span>≈ ${fmtEur(r.fuelCost)} Sprit</span></div>
         <div class="kpi"><b>${fmtEur(r.tollSum)}</b><span>Maut/Vignetten</span></div>
         <div class="kpi"><b>${fmtEur(r.total)}</b><span>Kosten gesamt</span></div>
