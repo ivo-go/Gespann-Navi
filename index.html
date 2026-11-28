@@ -113,6 +113,9 @@ td.r,th.r{text-align:right}
 .pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
 .fuelpin{width:22px;height:22px;border-radius:6px;background:#fff;border:2px solid var(--accent);display:grid;place-items:center;font:700 11px var(--font-display);color:#14366b}
 .fuelpin.cheap{border-color:#15803d;background:#dcfce7}
+.tpin{width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid #f59e0b;display:grid;place-items:center;font-size:13px;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+.tpin.unf{border-color:#dc2626;background:#fee2e2}.tpin.sperr{border-color:#7f1d1d}.tpin.bau{border-color:#ea580c}.tpin.cam{border-color:#1d4ed8;border-radius:6px}
+.leaflet-control-layers-expanded{font-size:14px;line-height:1.7}
 footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
@@ -209,7 +212,7 @@ footer{font-size:11px;color:var(--muted);padding:10px 16px 16px}
       <button class="btn" id="save">Gespann speichern</button>
       <div id="saved" class="hint"></div>
     </div>
-    <footer>Karten &amp; Daten © OpenStreetMap-Mitwirkende · Routing: Valhalla (FOSSGIS) · Suche: Photon · Tankstellen: Overpass. Alle Maut-, Preis- und Tempoangaben sind Richtwerte ohne Gewähr – bitte vor der Fahrt prüfen.</footer>
+    <footer>Karten &amp; Daten © OpenStreetMap-Mitwirkende · Routing: Valhalla (FOSSGIS) · Suche: Photon · Tankstellen &amp; Blitzer: Overpass · Verkehrsmeldungen: Autobahn GmbH des Bundes (nur deutsche Autobahnen). Alle Maut-, Preis- und Tempoangaben sind Richtwerte ohne Gewähr – bitte vor der Fahrt prüfen.</footer>
   </section>
   <div id="map"></div>
 </main>
@@ -323,6 +326,76 @@ const map = L.map("map",{zoomControl:true}).setView([47.5, 10.5], 5);
 L.tileLayer("https://tile.openstreetmap.de/{z}/{x}/{y}.png",{
   maxZoom:19, attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende'}).addTo(map);
 const pinIcon = c => L.divIcon({className:"",html:`<div class="pin" style="background:${c}"></div>`,iconSize:[26,26],iconAnchor:[13,26]});
+/* ---------- Verkehrslage (Autobahn GmbH, nur Deutschland) und Blitzer (OSM) ---------- */
+const AB_API = "https://verkehr.autobahn.de/o/autobahn/";
+const tIcon = (sym, cls) => L.divIcon({className:"",html:`<div class="tpin ${cls}">${sym}</div>`,iconSize:[24,24],iconAnchor:[12,12]});
+const trafficLayers = {
+  stau: L.layerGroup(), unfall: L.layerGroup(), sperrung: L.layerGroup(), baustelle: L.layerGroup(), blitzer: L.layerGroup()
+};
+const abCache = {}; // service -> {t, items}
+async function abService(service){
+  const c = abCache[service]; if(c && Date.now()-c.t < 5*60*1000) return c.items;
+  let roads = abCache.roads;
+  if(!roads){ roads = (await (await fetch(AB_API)).json()).roads || []; abCache.roads = roads; }
+  const items = [], queue = roads.slice();
+  const worker = async () => { while(queue.length){ const rd = queue.shift();
+    try{ const j = await (await fetch(AB_API+encodeURIComponent(rd.trim())+"/services/"+service)).json(); (j[service]||[]).forEach(x=>items.push(x)); }catch(e){} } };
+  await Promise.all(Array.from({length:8}, worker));
+  const seen = new Set(), uniq = items.filter(x=>{ const k=x.identifier||x.title+x.subtitle; if(seen.has(k)) return false; seen.add(k); return true; });
+  abCache[service] = {t:Date.now(), items:uniq}; return uniq;
+}
+function abPopup(x){
+  const d = (x.description||[]).filter(Boolean).map(esc).join("<br>");
+  return `<b>${esc(x.title)}</b>${x.subtitle?"<br>"+esc(x.subtitle):""}${d?`<div style="margin-top:4px;font-size:12px;max-height:180px;overflow:auto">${d}</div>`:""}`;
+}
+function abLatLng(x){ const c=x.coordinate||{}; const la=parseFloat(c.lat), lo=parseFloat(c.long??c.lon); return isFinite(la)&&isFinite(lo)?[la,lo]:null; }
+let abLoading = null;
+async function loadTraffic(){
+  if(abLoading) return abLoading;
+  abLoading = (async () => {
+    setStatus("Lade Verkehrsmeldungen der Autobahn GmbH …");
+    try{
+      const want = n => map.hasLayer(trafficLayers[n]);
+      if(want("stau") || want("unfall")){
+        const w = await abService("warning"); trafficLayers.stau.clearLayers(); trafficLayers.unfall.clearLayers();
+        w.forEach(x=>{ const ll=abLatLng(x); if(!ll) return; const txt=(x.title+" "+(x.description||[]).join(" ")).toLowerCase();
+          const unf = /unfall|unfällen|bergung/.test(txt);
+          L.marker(ll,{icon:unf?tIcon("💥","unf"):tIcon("🚗","stau")}).bindPopup(abPopup(x)).addTo(unf?trafficLayers.unfall:trafficLayers.stau); });
+      }
+      if(want("sperrung")){ const w = await abService("closure"); trafficLayers.sperrung.clearLayers();
+        w.forEach(x=>{ const ll=abLatLng(x); if(ll) L.marker(ll,{icon:tIcon("⛔","sperr")}).bindPopup(abPopup(x)).addTo(trafficLayers.sperrung); }); }
+      if(want("baustelle")){ const w = await abService("roadworks"); trafficLayers.baustelle.clearLayers();
+        w.forEach(x=>{ const ll=abLatLng(x); if(ll) L.marker(ll,{icon:tIcon("🚧","bau")}).bindPopup(abPopup(x)).addTo(trafficLayers.baustelle); }); }
+      setStatus("Verkehrslage aktualisiert ("+new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})+" Uhr, nur deutsche Autobahnen).");
+    }catch(e){ setStatus("Verkehrsmeldungen konnten nicht geladen werden.", true); }
+    abLoading = null;
+  })();
+  return abLoading;
+}
+let camTimer = null, camKey = "";
+async function loadCams(){
+  if(!map.hasLayer(trafficLayers.blitzer)) return;
+  if(map.getZoom() < 10){ trafficLayers.blitzer.clearLayers(); camKey=""; setStatus("Blitzer: bitte näher heranzoomen."); return; }
+  const b = map.getBounds().pad(0.2), key = [b.getSouth(),b.getWest(),b.getNorth(),b.getEast()].map(v=>v.toFixed(2)).join(",");
+  if(key === camKey) return; camKey = key;
+  const q = `[out:json][timeout:25];(node[highway=speed_camera](${key});node["enforcement"="maxspeed"](${key}););out tags;`;
+  try{
+    const r = await fetch(OVERPASS,{method:"POST",body:"data="+encodeURIComponent(q)}); const j = await r.json();
+    trafficLayers.blitzer.clearLayers();
+    (j.elements||[]).forEach(e=>{ if(e.lat==null) return; const t=e.tags||{}; const v=t.maxspeed?` · ${esc(t.maxspeed)} km/h`:"";
+      L.marker([e.lat,e.lon],{icon:tIcon("📷","cam")}).bindTooltip("Fester Blitzer"+v+(t.direction?` · Richtung ${esc(t.direction)}`:"")).addTo(trafficLayers.blitzer); });
+  }catch(e){ camKey=""; setStatus("Blitzer konnten nicht geladen werden.", true); }
+}
+L.control.layers(null, {
+  "🚗 Staus / Behinderungen": trafficLayers.stau,
+  "💥 Unfälle": trafficLayers.unfall,
+  "⛔ Sperrungen": trafficLayers.sperrung,
+  "🚧 Baustellen": trafficLayers.baustelle,
+  "📷 Feste Blitzer": trafficLayers.blitzer
+},{collapsed:true, position:"topright"}).addTo(map);
+map.on("overlayadd", e => { if(e.layer===trafficLayers.blitzer) loadCams(); else loadTraffic(); });
+map.on("moveend", () => { clearTimeout(camTimer); camTimer = setTimeout(loadCams, 600); });
+setInterval(() => { if(["stau","unfall","sperrung","baustelle"].some(n=>map.hasLayer(trafficLayers[n]))) loadTraffic(); }, 5*60*1000);
 const pts = {from:null, to:null}; const pinMarkers = {};
 function setPoint(which, lat, lon, label){
   pts[which] = {lat, lon, label};
